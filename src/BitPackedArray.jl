@@ -98,6 +98,8 @@ bitunpacked
 
 ### Broadcasting
 
+Broadcast.broadcastable(x::BitPackedArray) = bitunpacked(x)
+
 struct BitPackedArrayStyle{N} <: Broadcast.AbstractArrayStyle{N} end
 
 Broadcast.BroadcastStyle(::Type{<:BitPackedArray{W,T,N}}) where {W,T,N} = BitPackedArrayStyle{N}()
