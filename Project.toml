@@ -1,13 +1,7 @@
 name = "BitPacking"
-uuid = "b58c8408-13c4-4787-8733-ac52107ded21"
+uuid = "b58c8408-13c4-4787-8733-7038ae624acf"
 authors = ["Anton Oresten <antonoresten@proton.me> and contributors"]
-version = "1.0.0-DEV"
+version = "0.1.0"
 
 [compat]
 julia = "1.10"
-
-[extras]
-Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-
-[targets]
-test = ["Test"]
