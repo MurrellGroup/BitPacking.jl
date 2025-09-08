@@ -5,8 +5,7 @@
 [![Build Status](https://github.com/MurrellGroup/BitPacking.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/MurrellGroup/BitPacking.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/MurrellGroup/BitPacking.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/MurrellGroup/BitPacking.jl)
 
-BitPacking.jl is a Julia package that implements bitpacking and unpacking arrays with element bitwidths from 1 to 8.
-Methods are designed to be device-agnostic, meaning they also run fast on GPUs.
+BitPacking.jl is a Julia package that implements bitpacking and unpacking arrays with element bit-widths from 1 to 8, imposing mild size limitations on the first dimension. Bitpacking methods are designed to be device-agnostic, meaning they run fast on GPUs.
 
 ## Usage
 
