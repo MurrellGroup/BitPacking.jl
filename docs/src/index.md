@@ -6,9 +6,31 @@ CurrentModule = BitPacking
 
 Documentation for [BitPacking](https://github.com/MurrellGroup/BitPacking.jl).
 
-```@index
+## Contents
+
+```@contents
+Pages = ["index.md"]
 ```
 
-```@autodocs
-Modules = [BitPacking]
+## `bitwidth` interface for narrow types
+
+```@docs
+bitwidth
+```
+
+## BitPackedArray
+
+```@docs
+BitPackedArray
+bitpacked
+bitunpacked
+```
+
+## Primitives
+
+```@docs
+packbits!
+packbits
+unpackbits!
+unpackbits
 ```

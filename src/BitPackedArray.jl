@@ -57,7 +57,7 @@ A wrapper for an array of packed bytes.
 Use [`bitpacked`](@ref) to create a `BitPackedArray`, and [`bitunpacked`](@ref) to unpack it.
 
 !!! warning
-    BitPackedArray has limited indexing support.
+    Attempting to index into a `BitPackedArray` on GPUs may lead to scalar indexing errors.
 """
 BitPackedArray
 
