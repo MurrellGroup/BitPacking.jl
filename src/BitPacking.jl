@@ -1,11 +1,10 @@
 module BitPacking
 
+include("chunk.jl")
+include("group.jl")
+
 include("bitwidth.jl")
 export bitwidth
-
-include("chunk.jl")
-
-include("group.jl")
 
 include("packbits.jl")
 export packbits, packbits!

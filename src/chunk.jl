@@ -184,5 +184,5 @@ end
 # aaaaaaaa
 # [a8 a7 a6 a5 a4 a3 a2 a1]
 
-packchunk(::Val{8}, x::NTuple{1,UInt8}) = x
-unpackchunk(::Val{8}, x::NTuple{1,UInt8}) = x
+packchunk(::Val{8}, (a,)::NTuple{1,UInt8}) = (a,)
+unpackchunk(::Val{8}, (b1,)::NTuple{1,UInt8}) = (b1,)

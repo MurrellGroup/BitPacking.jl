@@ -48,3 +48,45 @@ function unpackbits(w::Val{W}, packed_bytes::AbstractArray{UInt8}, T::Type=UInt8
     unpackbits!(w, x, packed_bytes; kws...)
     return x
 end
+
+"""
+    packbits!(w::Int, packed_bytes::AbstractArray{UInt8}, x::AbstractArray; groups::Val=Val(1))
+
+Mutates `packed_bytes` in-place to pack `x` into `W` bits per element.
+
+The keyword argument `groups` can be increased to improve performance,
+while limiting the allowed sizes of the first dimension of `x`.
+
+See also [`packbits`](@ref), [`unpackbits!`](@ref), [`unpackbits`](@ref).
+"""
+packbits!
+
+"""
+    packbits(w::Int, x::AbstractArray; groups::Val=Val(1))
+
+Returns a `BitPackedArray` of the same size as `x`, with each element packed into `W` bits per element.
+
+See also [`packbits!`](@ref), [`unpackbits!`](@ref), [`unpackbits`](@ref).
+"""
+packbits
+
+"""
+    unpackbits!(w::Int, x::AbstractArray, packed_bytes::AbstractArray{UInt8}; groups::Val=Val(1))
+
+Mutates `x` in-place to unpack `packed_bytes` into byte-sized elements of type `eltype(x)`.
+
+The keyword argument `groups` can be increased to improve performance,
+while limiting the allowed sizes of the first dimension of `x`.
+
+See also [`packbits!`](@ref), [`packbits`](@ref), [`unpackbits`](@ref).
+"""
+unpackbits!
+
+"""
+    unpackbits(w::Int, packed_bytes::AbstractArray{UInt8}, T::Type=UInt8; groups::Val=Val(1))
+
+Returns an array of the same size as `packed_bytes`, into byte-sized elements of type `T`.
+
+See also [`packbits!`](@ref), [`packbits`](@ref), [`unpackbits!`](@ref).
+"""
+unpackbits
