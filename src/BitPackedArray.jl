@@ -78,16 +78,7 @@ julia> packed = bitpacked(x, 1);
 julia> packed == x
 true
 
-julia> packed .= [true false]
-8×2 BitPackedMatrix{1, Bool, Matrix{UInt8}}:
- 1  0
- 1  0
- 1  0
- 1  0
- 1  0
- 1  0
- 1  0
- 1  0
+julia> packed .= [true false];
 
 julia> all(packed[:,1])
 true
@@ -115,21 +106,4 @@ Broadcast.BroadcastStyle(::Type{<:BitPackedArray{W,T,N}}) where {W,T,N} = BitPac
 function Base.copyto!(x::BitPackedArray{W}, bc::Broadcast.Broadcasted) where W
     packbits!(x, Broadcast.materialize(bc))
     return x
-end
-
-function Base.similar(::Broadcast.Broadcasted{BitPackedArrayStyle{N}}, ::Type{ElType}, dims) where {N,ElType}
-    W = bitwidth(ElType)
-    sz = map(length, dims)
-    nd = length(sz)
-    nd >= 1 || return BitPackedArray{W,ElType,0}(reshape(UInt8[], ()))
-    packed_first = (sz[1] * W) ÷ 8
-    P = Array{UInt8}(undef, packed_first, sz[2:end]...)
-    return BitPackedArray{W,ElType,nd}(P)
-end
-
-function Base.copy(bc::Broadcast.Broadcasted{BitPackedArrayStyle{N}}) where {N}
-    ElType = Broadcast.combine_eltypes(bc.f, bc.args)
-    dest = Base.similar(bc, ElType, axes(bc))
-    packbits!(dest, Broadcast.materialize(bc))
-    return dest
 end
