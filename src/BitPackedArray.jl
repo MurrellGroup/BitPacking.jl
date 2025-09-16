@@ -103,8 +103,9 @@ Broadcast.broadcastable(x::BitPackedArray) = bitunpacked(x)
 struct BitPackedArrayStyle{N} <: Broadcast.AbstractArrayStyle{N} end
 
 Broadcast.BroadcastStyle(::Type{<:BitPackedArray{W,T,N}}) where {W,T,N} = BitPackedArrayStyle{N}()
+(::Type{<:BitPackedArrayStyle})(::Val{N}) where N = BitPackedArrayStyle{N}()
 
-function Base.materialize!(x::BitPackedArray{W}, bc::Broadcast.Broadcasted) where W
+function Base.copyto!(x::BitPackedArray{W}, bc::Broadcast.Broadcasted) where W
     packbits!(x, Broadcast.materialize(bc))
     return x
 end
