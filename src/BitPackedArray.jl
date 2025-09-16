@@ -13,7 +13,7 @@ function bitpacked(x::AbstractArray{T,N}, w::Val{W}; kws...) where {T,N,W}
     return BitPackedArray{W,T,N}(packed_bytes)
 end
 
-bitpacked(x::BitPackedArray{W}, ::Val{W}) where W = x
+bitpacked(x::BitPackedArray{W}, ::Val{W}; kws...) where W = x
 bitpacked(x::AbstractArray{T}, W::Int=bitwidth(T); kws...) where T = bitpacked(x, Val(W); kws...)
 
 bitunpacked(x::BitPackedArray{W,T}) where {W,T} = unpackbits(Val(W), x.packed_bytes, T)
@@ -103,9 +103,16 @@ Broadcast.broadcastable(x::BitPackedArray) = bitunpacked(x)
 struct BitPackedArrayStyle{N} <: Broadcast.AbstractArrayStyle{N} end
 
 Broadcast.BroadcastStyle(::Type{<:BitPackedArray{W,T,N}}) where {W,T,N} = BitPackedArrayStyle{N}()
-(::Type{<:BitPackedArrayStyle})(::Val{N}) where N = BitPackedArrayStyle{N}()
 
-function Base.copyto!(x::BitPackedArray{W}, bc::Broadcast.Broadcasted) where W
+function Base.materialize!(x::BitPackedArray{W}, bc::Broadcast.Broadcasted) where W
     packbits!(x, Broadcast.materialize(bc))
+    return x
+end
+
+using FillArrays
+
+function Base.materialize!(x::BitPackedArray{W}, bc::Broadcast.Broadcasted{<:Broadcast.AbstractArrayStyle{0}}) where W
+    v, = bc.args
+    packbits!(x, Fill(v, size(x)))
     return x
 end

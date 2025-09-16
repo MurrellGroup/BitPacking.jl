@@ -3,5 +3,9 @@ uuid = "b58c8408-13c4-4787-8733-7038ae624acf"
 authors = ["Anton Oresten <antonoresten@proton.me> and contributors"]
 version = "0.1.0"
 
+[deps]
+FillArrays = "1a297f60-69ca-5386-bcde-b61e274b549b"
+
 [compat]
+FillArrays = "1.14.0"
 julia = "1.10"
