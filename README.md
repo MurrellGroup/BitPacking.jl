@@ -34,4 +34,4 @@ Pkg.add("BitPacking")
 
 ## Acknowledgements
 
-BitPacking.jl partially inspired by [IntArrays.jl](https://github.com/bicycle1885/IntArrays.jl)
+BitPacking.jl is partially inspired by [IntArrays.jl](https://github.com/bicycle1885/IntArrays.jl)
