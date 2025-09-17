@@ -31,3 +31,7 @@ y .= rand(UInt8, 32) .& 0b1111 # assign new values
 using Pkg
 Pkg.add("BitPacking")
 ```
+
+## Acknowledgements
+
+BitPacking.jl partially inspired by [IntArrays.jl](https://github.com/bicycle1885/IntArrays.jl)
