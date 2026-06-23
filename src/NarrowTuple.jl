@@ -136,10 +136,6 @@ function field_bitwidths(::Type{Ts}) where Ts<:Tuple
     return map(T -> Int(bitwidth(T)), fieldtypes(Ts))
 end
 
-function bitwidth(::Type{Ts}) where Ts<:Tuple
-    return sum(field_bitwidths(Ts); init=0)
-end
-
 function exact_unsigned_type(total_bits::Int)
     total_bits ==   8 ? UInt8   :
     total_bits ==  16 ? UInt16  :
@@ -155,7 +151,7 @@ function narrow_storage_type(total_bits::Int)
 end
 
 function narrow_storage_type(::Type{Ts}) where Ts<:Tuple
-    return narrow_storage_type(bitwidth(Ts))
+    return narrow_storage_type(sum(field_bitwidths(Ts); init=0))
 end
 
 function narrow_mask(::Type{U}, width::Int) where U<:Unsigned
