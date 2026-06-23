@@ -92,7 +92,7 @@ inner_size(arr::NarrowArray, i::Integer) = size(eltype(parent(arr)), i)
 inner_size(arr::NarrowArray{<:Any,N}) where N = ntuple(i -> inner_size(arr, i), Val(N))
 
 Base.size(arr::NarrowArray, i::Integer) = size(parent(arr), i) * size(eltype(parent(arr)), i)
-Base.size(arr::NarrowArray{<:Any,N}) where N = ntuple(i -> size(arr, i), Val(N))
+Base.size(arr::NarrowArray) = size(parent(arr)) .* inner_size(arr)
 
 Base.IndexStyle(::Type{<:NarrowArray}) = IndexCartesian()
 function Base.getindex(arr::NarrowArray{T,N}, i::Vararg{Int,N}) where {T,N}

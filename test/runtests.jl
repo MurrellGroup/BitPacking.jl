@@ -56,10 +56,23 @@ bits(x) = x
         @test v9 isa NVector{Bool,9}
         @test v9.data == (0x55, 0x01)
         @test Tuple(v9) == bools9
+        @test v9[1] === true
+        @test v9[9] === true
         @test reinterpret(UInt16, v9) == 0x0155
+
+        f6 = NVector((float6(0x01), float6(0x02), float6(0x03), float6(0x04)))
+        @test f6 isa NVector{Float6_E3M2FN,4}
+        @test f6.data == (0x81, 0x30, 0x10)
+        @test bits.(Tuple(f6)) == (0x01, 0x02, 0x03, 0x04)
+        @test bits(f6[1]) == 0x01
+        @test bits(f6[2]) == 0x02
+        @test bits(f6[3]) == 0x03
+        @test bits(f6[4]) == 0x04
+        @test_throws BoundsError f6[5]
 
         m = NMatrix{Bool,2,4}(bools)
         @test m isa NMatrix{Bool,2,4}
+        @test IndexStyle(typeof(m)) === IndexLinear()
         @test size(m) == (2, 4)
         @test Tuple(m) == bools
         @test m[1, 1] === true
@@ -145,7 +158,13 @@ bits(x) = x
         @test sprint(show, T3) == "@NarrowTuple{Float4_E2M1FN, UInt8, Float4_E2M1FN}"
         @test sprint(show, NarrowTuple) == "NarrowTuple"
         @test sprint(show, NarrowTuple{Tuple{UInt8,Bool}}) == "NarrowTuple{Tuple{UInt8, Bool}}"
+        @test startswith(sprint(show, Union{typeof(nt_bool),T3}), "Union{")
         @test contains(sprint(show, methods(show, Tuple{IO,Type{<:NarrowTuple}})), "T<:NarrowTuple")
+        @test length(typeof(nt_bool)) == 2
+        @test firstindex(nt_bool) == 1
+        @test lastindex(nt_bool) == 2
+        @test convert(Tuple{UInt8,Bool}, nt_bool) == (0x00, true)
+        @test NarrowTuple{Tuple{UInt8,Bool}}(0x00, true) == nt_bool
         @test @NarrowTuple(0x00, true) == nt_bool
         @test @NarrowTuple((0x00, true)) == nt_bool
 
@@ -161,6 +180,8 @@ bits(x) = x
         @test BitPacking.bitwidth(BitPacking.OnePad{7}) == 7
         @test BitPacking.bitwidth(BitPacking.ZeroPad(7)) == 7
         @test BitPacking.bitwidth(BitPacking.OnePad(7)) == 7
+        @test BitPacking.ZeroPad{7}() == BitPacking.ZeroPad(7)
+        @test BitPacking.OnePad{7}() == BitPacking.OnePad(7)
         @test sprint(show, BitPacking.ZeroPad(7)) == "BitPacking.ZeroPad(7)"
         @test sprint(show, BitPacking.OnePad(7)) == "BitPacking.OnePad(7)"
 
@@ -189,6 +210,8 @@ bits(x) = x
         nt_one = Tone(0x00, true)
         @test nt_one.data == 0xff00
         @test Tuple(nt_one) == (0x00, true, BitPacking.OnePad(7))
+        @test NarrowTuple((0x00, true, BitPacking.OnePad(7))) == nt_one
+        @test NarrowTuple{Tuple{UInt8,Bool,BitPacking.OnePad{7}}}(0x00, true, BitPacking.OnePad(7)) == nt_one
         @test_throws ArgumentError Tone(0x0100)
 
         Tbytes = @NarrowTuple{Float4_E2M1FN,BitPacking.ZeroPad{5},UInt8}
@@ -256,6 +279,7 @@ bits(x) = x
         @test eltype(parent(f4x4_narrow)) <: NVector{Float4_E2M1FN,4}
         @test collect(reinterpret(UInt8, f4x4_narrow)) == UInt8[0x21, 0x43]
         @test bits.(copy(f4x4_narrow)) == bits.(f4_values)
+        @test NarrowArray{Float4_E2M1FN,1,4}(f4x4_narrow) === f4x4_narrow
         @test NarrowVector{Float4_E2M1FN,4}(f4_narrow) == f4x4_narrow
 
         f4_bits = reinterpret(Bool, f4_narrow)
@@ -269,6 +293,9 @@ bits(x) = x
         @test collect(reinterpret(UInt8, host_f4_bits)) == UInt8[0x21, 0x43]
 
         f4_matrix = NarrowArray{Float4_E2M1FN}(reshape(f4_values, 2, 2))
+        f4_matrix_explicit = NarrowArray{Float4_E2M1FN,2}(reshape(f4_values, 2, 2))
+        @test f4_matrix_explicit == f4_matrix
+        @test NarrowArray{Float4_E2M1FN,2}(f4_matrix) === f4_matrix
         f4_bytes = reinterpret(UInt8, f4_matrix)
         @test size(f4_bytes) == (1, 2)
         @test collect(f4_bytes) == UInt8[0x21 0x43]
