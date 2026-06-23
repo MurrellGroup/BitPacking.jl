@@ -2,13 +2,21 @@ using BitPacking
 using Test
 
 primitive type Float4_E2M1FN 8 end
+primitive type Float6_E3M2FN 8 end
 
 BitPacking.bitwidth(::Type{Float4_E2M1FN}) = 4
 Float4_E2M1FN(x::UInt8) = reinterpret(Float4_E2M1FN, x)
 Base.convert(::Type{Float4_E2M1FN}, x::UInt8) = Float4_E2M1FN(x)
+Base.convert(::Type{UInt8}, x::Float4_E2M1FN) = reinterpret(UInt8, x)
+
+BitPacking.bitwidth(::Type{Float6_E3M2FN}) = 6
+Float6_E3M2FN(x::UInt8) = reinterpret(Float6_E3M2FN, x)
+Base.convert(::Type{Float6_E3M2FN}, x::UInt8) = Float6_E3M2FN(x)
 
 float4(x::UInt8) = reinterpret(Float4_E2M1FN, x)
+float6(x::UInt8) = reinterpret(Float6_E3M2FN, x)
 bits(x::Float4_E2M1FN) = reinterpret(UInt8, x)
+bits(x::Float6_E3M2FN) = reinterpret(UInt8, x)
 bits(x) = x
 
 @testset "BitPacking.jl" begin
@@ -210,9 +218,76 @@ bits(x) = x
         host_narrow = BitPacking.Adapt.adapt(Array, narrow)
         @test host_narrow isa NarrowVector{Bool}
         @test parent(host_narrow) isa Vector
+        @test eltype(parent(host_narrow)) <: NVector{Bool}
         @test copy(host_narrow) == values
 
+        int_values = Int.(narrow)
+        @test size(int_values) == size(narrow)
+        @test parent(int_values) isa Vector{BitPacking.SVector{8,Int}}
+        @test collect(int_values) == Int[1, 0, 1, 0, 1, 0, 1, 0]
+
+        uint_values = UInt8[1, 0, 1, 0, 1, 0, 1, 0]
+        bool_from_uint = NarrowArray{Bool}(uint_values)
+        @test bool_from_uint isa NarrowVector{Bool}
+        @test collect(reinterpret(UInt8, bool_from_uint)) == UInt8[0x55]
+        @test copy(bool_from_uint) == values
+        @test NarrowArray{Bool}(bool_from_uint) === bool_from_uint
+
+        values16 = Bool[1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 0]
+        narrow16 = NarrowArray{Bool}(values16)
+        bytes16 = reinterpret(UInt8, narrow16)
+        @test bytes16 isa AbstractVector{UInt8}
+        @test collect(bytes16) == UInt8[0x55, 0x33]
+        @test collect(reinterpret(UInt16, narrow16)) == UInt16[0x3355]
+
+        f4_values = Float4_E2M1FN[float4(0x01), float4(0x02), float4(0x03), float4(0x04)]
+        f4_narrow = NarrowArray{Float4_E2M1FN}(f4_values)
+        @test size(f4_narrow) == (4,)
+        @test collect(reinterpret(UInt8, f4_narrow)) == UInt8[0x21, 0x43]
+        @test collect(UInt8.(f4_narrow)) == UInt8[0x01, 0x02, 0x03, 0x04]
+        @test NarrowArray{Float4_E2M1FN}(UInt8[0x01, 0x02, 0x03, 0x04]) == f4_narrow
+        @test copy(NarrowArray{UInt8}(f4_narrow)) == UInt8[0x01, 0x02, 0x03, 0x04]
+
+        f4x4_narrow = NarrowArray{Float4_E2M1FN,1,4}(f4_values)
+        @test f4x4_narrow isa NarrowVector{Float4_E2M1FN,4}
+        @test eltype(parent(f4x4_narrow)) <: NVector{Float4_E2M1FN,4}
+        @test collect(reinterpret(UInt8, f4x4_narrow)) == UInt8[0x21, 0x43]
+        @test bits.(copy(f4x4_narrow)) == bits.(f4_values)
+        @test NarrowVector{Float4_E2M1FN,4}(f4_narrow) == f4x4_narrow
+
+        f4_bits = reinterpret(Bool, f4_narrow)
+        @test f4_bits isa NarrowVector{Bool}
+        @test size(f4_bits) == (16,)
+        @test collect(reinterpret(UInt8, f4_bits)) == UInt8[0x21, 0x43]
+        @test bits.(copy(reinterpret(Float4_E2M1FN, f4_bits))) == bits.(f4_values)
+        host_f4_bits = BitPacking.Adapt.adapt(Array, f4_bits)
+        @test host_f4_bits isa NarrowVector{Bool}
+        @test eltype(parent(host_f4_bits)) <: NVector{Bool}
+        @test collect(reinterpret(UInt8, host_f4_bits)) == UInt8[0x21, 0x43]
+
+        f4_matrix = NarrowArray{Float4_E2M1FN}(reshape(f4_values, 2, 2))
+        f4_bytes = reinterpret(UInt8, f4_matrix)
+        @test size(f4_bytes) == (1, 2)
+        @test collect(f4_bytes) == UInt8[0x21 0x43]
+        f4_uints = UInt8.(f4_matrix)
+        @test size(f4_uints) == size(f4_matrix)
+        @test parent(f4_uints) isa Matrix{BitPacking.SVector{2,UInt8}}
+        @test collect(f4_uints) == UInt8[0x01 0x03; 0x02 0x04]
+
+        f6_values = Float6_E3M2FN[float6(0x01), float6(0x02), float6(0x03), float6(0x04)]
+        f6_narrow = NarrowArray{Float6_E3M2FN}(f6_values)
+        @test collect(reinterpret(UInt8, f6_narrow)) == UInt8[0x81, 0x30, 0x10]
+        f6_bits = reinterpret(Bool, f6_narrow)
+        @test f6_bits isa NarrowVector{Bool}
+        @test size(f6_bits) == (24,)
+        @test collect(reinterpret(UInt8, f6_bits)) == UInt8[0x81, 0x30, 0x10]
+        @test bits.(copy(reinterpret(Float6_E3M2FN, f6_bits))) == bits.(f6_values)
+
         @test_throws ArgumentError NarrowArray{Bool}(values[1:4])
+        @test_throws ArgumentError NarrowArray{Float4_E2M1FN,1,3}(f4_values[1:3])
+        @test_throws ArgumentError NarrowArray{Float4_E2M1FN,1,4}(f4_values[1:2])
+        @test bits.(copy(reinterpret(Float4_E2M1FN, narrow))) == UInt8[0x05, 0x05]
+        @test_throws ArgumentError reinterpret(UInt16, narrow)
     end
 
 end
