@@ -6,31 +6,26 @@ CurrentModule = BitPacking
 
 Documentation for [BitPacking](https://github.com/MurrellGroup/BitPacking.jl).
 
-## Contents
-
-```@contents
-Pages = ["index.md"]
-```
 
 ## `bitwidth` interface for narrow types
 
 ```@docs
-bitwidth
+BitPacking.bitwidth
 ```
 
-## BitPackedArray
+## Narrow-element arrays
 
 ```@docs
-BitPackedArray
-bitpacked
-bitunpacked
+NArray
+NarrowArray
 ```
 
-## Primitives
+## Narrow tuples
 
 ```@docs
-packbits!
-packbits
-unpackbits!
-unpackbits
+NarrowTuple
+@NarrowTuple
+BitPacking.Pad
+BitPacking.ZeroPad
+BitPacking.OnePad
 ```

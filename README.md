@@ -5,25 +5,39 @@
 [![Build Status](https://github.com/MurrellGroup/BitPacking.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/MurrellGroup/BitPacking.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/MurrellGroup/BitPacking.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/MurrellGroup/BitPacking.jl)
 
-BitPacking.jl is a Julia package that implements bitpacking and unpacking arrays with element bit-widths from 1 to 8, imposing mild size limitations on the first dimension. Bitpacking methods are designed to be device-agnostic, meaning they run fast on GPUs.
+BitPacking.jl provides small bit-packed building blocks for Julia array code:
 
-## Usage
+- `NArray`, `NVector`, and `NMatrix` pack a static group of narrow values into one storage value.
+- `NarrowArray`, `NarrowVector`, and `NarrowMatrix` view an array of packed groups as a logical array of values.
+- `NarrowTuple` and `@NarrowTuple` pack heterogeneous isbits values, with optional padding fields.
+
+Packages can extend `BitPacking.bitwidth(::Type)` for their own narrow scalar types.
+
+## Examples
 
 ```julia
 using BitPacking
 
-x = rand(UInt8, 32) .& 0b1111 # 4-bit unpacked values
-y = bitpacked(x, 4)           # half the memory size
-x == y == bitunpacked(y)      # true
+v = NVector(true, false, true, false, true, false, true, false)
 
-# broadcasting assignment works
-y .= rand(UInt8, 32) .& 0b1111 # assign new values
+Tuple(v)                 # (true, false, true, false, true, false, true, false)
+reinterpret(UInt8, v)    # 0x55
 ```
 
-## Limitations
+```julia
+x = Bool[1, 0, 1, 0, 1, 0, 1, 0]
+packed = NarrowArray{Bool}(x)
 
-- The first dimension of the input array must currently be divisible by the least common multiple of 8 and the bitwidth.
-- Broadcasting assignment first materializes the unpacked result.
+copy(packed) == x        # true
+parent(packed)           # Vector{NVector{Bool,8}}
+```
+
+```julia
+t = @NarrowTuple(0x12, true)
+
+Tuple(t)                 # (0x12, true)
+BitPacking.bitwidth(t)   # 9
+```
 
 ## Installation
 
@@ -31,7 +45,3 @@ y .= rand(UInt8, 32) .& 0b1111 # assign new values
 using Pkg
 Pkg.add("BitPacking")
 ```
-
-## Acknowledgements
-
-BitPacking.jl is partially inspired by [IntArrays.jl](https://github.com/bicycle1885/IntArrays.jl)
