@@ -74,6 +74,9 @@ function NArray{T,N,S}(xs::NTuple{L,T}) where {T,N,S<:NTuple{N,Any},L}
     length(arr) == L || throw(ArgumentError("Type expects $(length(arr)) element(s), but got $L."))
     return arr
 end
+NArray{T,N,S}(xs::Tuple) where {T,N,S<:NTuple{N,Any}} =
+    NArray{T,N,S}(convert.(T, xs))
+NArray{T,N,S}(xs...) where {T,N,S<:NTuple{N,Any}} = NArray{T,N,S}(xs)
 
 function StaticArrays.similar_type(
     ::Type{<:NArray{T,<:Any,S}},

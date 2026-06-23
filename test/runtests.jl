@@ -107,6 +107,8 @@ bits(x) = x
         @test bool_from_int isa NVector{Bool,8}
         @test bool_from_int.data == 0x55
         @test Tuple(bool_from_int) == bools
+        @test NVector{Bool,8}((1, 0, 1, 0, 1, 0, 1, 0)) == bool_from_int
+        @test NVector{Bool,8}(1, 0, 1, 0, 1, 0, 1, 0) == bool_from_int
 
         uint_from_bool = NVector{UInt8,8}(BitPacking.SVector{8,Bool}(bools))
         @test uint_from_bool isa NVector{UInt8,8}
@@ -116,6 +118,8 @@ bits(x) = x
         @test f4_from_uint isa NVector{Float4_E2M1FN,2}
         @test f4_from_uint.data == 0x3a
         @test bits.(Tuple(f4_from_uint)) == (0x0a, 0x03)
+        @test NVector{Float4_E2M1FN,2}((0x0a, 0x03)) == f4_from_uint
+        @test NVector{Float4_E2M1FN,2}(0x0a, 0x03) == f4_from_uint
 
         @test BitPacking.StaticArrays.similar_type(typeof(v), Int, BitPacking.StaticArrays.Size(2)) === NVector{Int,2}
         @test_throws ArgumentError NVector{Bool,4}((true, false))
