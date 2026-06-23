@@ -143,6 +143,9 @@ bits(x) = x
         @test sprint(show, nt_bool) == "@NarrowTuple(0x00, true)"
         @test sprint(show, typeof(nt_bool)) == "@NarrowTuple{UInt8, Bool}"
         @test sprint(show, T3) == "@NarrowTuple{Float4_E2M1FN, UInt8, Float4_E2M1FN}"
+        @test sprint(show, NarrowTuple) == "NarrowTuple"
+        @test sprint(show, NarrowTuple{Tuple{UInt8,Bool}}) == "NarrowTuple{Tuple{UInt8, Bool}}"
+        @test contains(sprint(show, methods(show, Tuple{IO,Type{<:NarrowTuple}})), "T<:NarrowTuple")
         @test @NarrowTuple(0x00, true) == nt_bool
         @test @NarrowTuple((0x00, true)) == nt_bool
 

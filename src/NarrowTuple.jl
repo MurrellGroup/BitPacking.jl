@@ -495,7 +495,17 @@ function show_narrow_tuple_fields(io::IO, ::Type{Ts}) where Ts<:Tuple
     end
 end
 
-function Base.show(io::IO, ::Type{NarrowTuple{Ts,D}}) where {Ts<:Tuple,D<:Storage}
+function Base.show(io::IO, ::Type{T}) where {T<:NarrowTuple}
+    T_unwrapped = Base.unwrap_unionall(T)
+    if !(T_unwrapped isa DataType && length(T_unwrapped.parameters) == 2)
+        return invoke(show, Tuple{IO,Type}, io, T)
+    end
+
+    Ts, D = T_unwrapped.parameters
+    if !(Ts isa Type && Ts <: Tuple && D isa Type && D <: Storage)
+        return invoke(show, Tuple{IO,Type}, io, T)
+    end
+
     print(io, "@NarrowTuple{")
     show_narrow_tuple_fields(io, Ts)
     print(io, "}")
