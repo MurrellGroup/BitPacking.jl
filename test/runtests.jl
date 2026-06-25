@@ -129,7 +129,8 @@ bits(x) = x
     @testset "NarrowTuple" begin
         T3 = @NarrowTuple{Float4_E2M1FN,UInt8,Float4_E2M1FN}
         @test T3 === NarrowTuple{Tuple{Float4_E2M1FN,UInt8,Float4_E2M1FN},UInt16}
-        @test BitPacking.bitwidth(Tuple{Float4_E2M1FN,UInt8,Float4_E2M1FN}) == 16
+        @test BitPacking.bitwidth(T3) == 16
+        @test BitPacking.bitwidth(Tuple{Float4_E2M1FN,UInt8,Float4_E2M1FN}) == 24
 
         x3 = (float4(0x0a), 0xbc, float4(0x03))
         nt3 = T3(x3)
@@ -178,14 +179,10 @@ bits(x) = x
         @test Tuple(nt_nested) == (true, nt_bool)
         @test sprint(show, typeof(nt_nested)) == "@NarrowTuple{Bool, @NarrowTuple{UInt8, Bool}}"
 
-        @test isabstracttype(BitPacking.ZeroPad{7})
-        @test isabstracttype(BitPacking.OnePad{7})
         @test BitPacking.bitwidth(BitPacking.ZeroPad{7}) == 7
         @test BitPacking.bitwidth(BitPacking.OnePad{7}) == 7
         @test BitPacking.bitwidth(BitPacking.ZeroPad(7)) == 7
         @test BitPacking.bitwidth(BitPacking.OnePad(7)) == 7
-        @test BitPacking.ZeroPad{7}() == BitPacking.ZeroPad(7)
-        @test BitPacking.OnePad{7}() == BitPacking.OnePad(7)
         @test sprint(show, BitPacking.ZeroPad(7)) == "BitPacking.ZeroPad(7)"
         @test sprint(show, BitPacking.OnePad(7)) == "BitPacking.OnePad(7)"
 

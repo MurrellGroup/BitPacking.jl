@@ -11,6 +11,12 @@ Use [`ZeroPad`](@ref) or [`OnePad`](@ref) in layouts.
 """
 abstract type Pad{N} end
 
+function check_pad_bitwidth(N)
+    N isa Integer || throw(ArgumentError("padding bitwidth must be an integer, got $N"))
+    N >= 1 || throw(ArgumentError("padding bitwidth must be positive, got $N"))
+    return Int(N)
+end
+
 """
     ZeroPad{N} <: Pad{N}
     ZeroPad(N)
@@ -32,7 +38,12 @@ Tuple(nt)  # (0x00, true, BitPacking.ZeroPad(7))
 Raw-storage constructors validate that the corresponding padding bits are
 zero.
 """
-abstract type ZeroPad{N} <: Pad{N} end
+struct ZeroPad{N} <: Pad{N}
+    function ZeroPad{N}() where N
+        check_pad_bitwidth(N)
+        new{N}()
+    end
+end
 
 """
     OnePad{N} <: Pad{N}
@@ -54,27 +65,17 @@ Tuple(nt)  # (0x00, true, BitPacking.OnePad(7))
 Raw-storage constructors validate that the corresponding padding bits are
 one.
 """
-abstract type OnePad{N} <: Pad{N} end
-
-struct ZeroPadValue{N} <: ZeroPad{N} end
-struct OnePadValue{N} <: OnePad{N} end
-
-function check_pad_bitwidth(N)
-    N isa Integer || throw(ArgumentError("padding bitwidth must be an integer, got $N"))
-    N >= 1 || throw(ArgumentError("padding bitwidth must be positive, got $N"))
-    return Int(N)
+struct OnePad{N} <: Pad{N}
+    function OnePad{N}() where N
+        check_pad_bitwidth(N)
+        new{N}()
+    end
 end
 
-ZeroPad(N) = ZeroPadValue{check_pad_bitwidth(N)}()
-OnePad(N) = OnePadValue{check_pad_bitwidth(N)}()
-(::Type{ZeroPad{N}})() where N = ZeroPadValue{check_pad_bitwidth(N)}()
-(::Type{OnePad{N}})() where N = OnePadValue{check_pad_bitwidth(N)}()
+ZeroPad(N) = ZeroPad{N}()
+OnePad(N) = OnePad{N}()
 
 bitwidth(::Type{<:Pad{N}}) where N = check_pad_bitwidth(N)
-
-is_pad_type(::Type{T}) where T = T <: Pad
-is_zero_pad_type(::Type{T}) where T = T <: ZeroPad
-is_one_pad_type(::Type{T}) where T = T <: OnePad
 
 layout_fieldtype(::Type{T}) where {N,T<:ZeroPad{N}} = ZeroPad{N}
 layout_fieldtype(::Type{T}) where {N,T<:OnePad{N}} = OnePad{N}
@@ -84,8 +85,6 @@ function layout_tuple_type(::Type{Ts}) where Ts<:Tuple
     return Tuple{map(layout_fieldtype, fieldtypes(Ts))...}
 end
 
-materialized_fieldtype(::Type{T}) where {N,T<:ZeroPad{N}} = ZeroPadValue{N}
-materialized_fieldtype(::Type{T}) where {N,T<:OnePad{N}} = OnePadValue{N}
 materialized_fieldtype(::Type{T}) where T = T
 
 function materialized_fieldtypes(::Type{Ts}) where Ts<:Tuple
@@ -97,15 +96,15 @@ function materialized_tuple_type(::Type{Ts}) where Ts<:Tuple
 end
 
 function unpadded_fieldtypes(::Type{Ts}) where Ts<:Tuple
-    return Tuple(T for T in fieldtypes(Ts) if !is_pad_type(T))
+    return Tuple(T for T in fieldtypes(Ts) if !(T <: Pad))
 end
 
 function unpadded_tuple_type(::Type{Ts}) where Ts<:Tuple
     return Tuple{unpadded_fieldtypes(Ts)...}
 end
 
-pad_value(::Type{T}) where {N,T<:ZeroPad{N}} = ZeroPadValue{N}()
-pad_value(::Type{T}) where {N,T<:OnePad{N}} = OnePadValue{N}()
+pad_value(::Type{T}) where {N,T<:ZeroPad{N}} = ZeroPad(N)
+pad_value(::Type{T}) where {N,T<:OnePad{N}} = OnePad(N)
 
 function check_narrow_tuple_type(::Type{Ts}) where Ts<:Tuple
     for T in fieldtypes(Ts)
@@ -115,9 +114,7 @@ function check_narrow_tuple_type(::Type{Ts}) where Ts<:Tuple
         W isa Integer ||
             throw(ArgumentError("bitwidth($T) must be an integer, got $W"))
 
-        if is_pad_type(T)
-            (is_zero_pad_type(T) || is_one_pad_type(T)) ||
-                throw(ArgumentError("NarrowTuple padding field type must be ZeroPad or OnePad, got $T"))
+        if T <: Pad
             W >= 1 || throw(ArgumentError("padding bitwidth must be positive, got $W"))
         else
             isbitstype(T) ||
@@ -231,7 +228,7 @@ struct NarrowTuple{Ts<:Tuple,D<:Storage}
     end
 end
 
-bitwidth(::Type{<:NarrowTuple{Ts}}) where Ts = bitwidth(Ts)
+bitwidth(::Type{<:NarrowTuple{Ts}}) where Ts = sum(bitwidth, Ts.parameters; init=0)
 
 @generated function narrow_tuple_pack(::Val{Ws}, ::Type{Layout}, ::Type{D}, xs::Values) where {Ws,Layout<:Tuple,D<:Storage,Values<:Tuple}
     types = fieldtypes(Layout)
@@ -243,7 +240,7 @@ bitwidth(::Type{<:NarrowTuple{Ts}}) where Ts = bitwidth(Ts)
     length(widths) == length(types) ||
         throw(ArgumentError("expected $(length(types)) field bitwidths for $Layout, got $(length(widths))"))
     for (T, W) in zip(types, widths)
-        is_pad_type(T) && continue
+        T <: Pad && continue
         1 <= W <= 8 * sizeof(T) ||
             throw(ArgumentError("bitwidth($T) must be in 1:$(8 * sizeof(T)), got $W"))
     end
@@ -257,8 +254,8 @@ bitwidth(::Type{<:NarrowTuple{Ts}}) where Ts = bitwidth(Ts)
     if D <: Unsigned
         terms = Any[]
         for (index, (T, W, start)) in enumerate(zip(types, widths, starts))
-            if is_pad_type(T)
-                is_one_pad_type(T) || continue
+            if T <: Pad
+                T <: OnePad || continue
                 expr = :($D($(narrow_mask(D, W))))
             else
                 U = unsigned_type(sizeof(T))
@@ -289,8 +286,8 @@ bitwidth(::Type{<:NarrowTuple{Ts}}) where Ts = bitwidth(Ts)
             dest_shift = first_bit - byte_first_bit
             width = last_bit - first_bit + 1
 
-            if is_pad_type(T)
-                is_one_pad_type(T) || continue
+            if T <: Pad
+                T <: OnePad || continue
                 expr = :(UInt8($(_low_mask(width))))
             else
                 expr = field_raw_expr(:xs, field_index, T)
@@ -318,7 +315,7 @@ function materialize_narrow_tuple_values(::Type{Ts}, xs::Tuple) where Ts<:Tuple
     value_index = 1
 
     for T in fieldtypes(Ts)
-        if is_pad_type(T)
+        if T <: Pad
             push!(result, pad_value(T))
         else
             push!(result, values[value_index])
@@ -346,7 +343,7 @@ NarrowTuple(xs::Ts) where Ts<:Tuple = NarrowTuple{layout_tuple_type(Ts)}(xs)
     length(widths) == length(types) ||
         throw(ArgumentError("expected $(length(types)) field bitwidths for $Ts, got $(length(widths))"))
     for (T, W) in zip(types, widths)
-        is_pad_type(T) && continue
+        T <: Pad && continue
         1 <= W <= 8 * sizeof(T) ||
             throw(ArgumentError("bitwidth($T) must be in 1:$(8 * sizeof(T)), got $W"))
     end
@@ -360,7 +357,7 @@ NarrowTuple(xs::Ts) where Ts<:Tuple = NarrowTuple{layout_tuple_type(Ts)}(xs)
 
     if D <: Unsigned
         for (index, (T, W, start)) in enumerate(zip(types, widths, starts))
-            if is_pad_type(T)
+            if T <: Pad
                 push!(values, pad_value(T))
                 continue
             end
@@ -375,7 +372,7 @@ NarrowTuple(xs::Ts) where Ts<:Tuple = NarrowTuple{layout_tuple_type(Ts)}(xs)
     end
 
     for (field_index, (T, W, field_first_bit)) in enumerate(zip(types, widths, starts))
-        if is_pad_type(T)
+        if T <: Pad
             push!(values, pad_value(T))
             continue
         end
@@ -419,18 +416,18 @@ end
 
     if D <: Unsigned
         for (T, W, start) in zip(types, widths, starts)
-            is_pad_type(T) || continue
+            T <: Pad || continue
 
             actual = :data
             start > 0 && (actual = :($actual >>> $start))
             actual = :($actual & $(narrow_mask(D, W)))
-            expected = is_one_pad_type(T) ? narrow_mask(D, W) : zero(D)
+            expected = T <: OnePad ? narrow_mask(D, W) : zero(D)
             message = "packed data does not match padding bits for $T"
             push!(checks, :($actual == $expected || throw(ArgumentError($message))))
         end
     else
         for (T, W, field_first_bit) in zip(types, widths, starts)
-            is_pad_type(T) || continue
+            T <: Pad || continue
 
             field_last_bit = field_first_bit + W - 1
             first_byte = field_first_bit ÷ 8
@@ -449,7 +446,7 @@ end
                 actual = :(Core.getfield(data, $(byte_index + 1)))
                 source_shift > 0 && (actual = :($actual >>> $source_shift))
                 width < 8 && (actual = :($actual & $(_low_mask(width))))
-                expected = is_one_pad_type(T) ? _low_mask(width) : 0x00
+                expected = T <: OnePad ? _low_mask(width) : 0x00
                 message = "packed data does not match padding bits for $T"
                 push!(checks, :($actual == $expected || throw(ArgumentError($message))))
             end
@@ -471,11 +468,11 @@ Base.iterate(nt::NarrowTuple, state...) = iterate(Tuple(nt), state...)
 Base.convert(::Type{Values}, nt::NarrowTuple) where Values<:Tuple = convert(Values, Tuple(nt))
 Base.reinterpret(::Type{T}, nt::NarrowTuple) where T = reinterpret(T, nt.data)
 
-Base.show(io::IO, ::ZeroPadValue{N}) where N = print(io, "BitPacking.ZeroPad(", N, ")")
-Base.show(io::IO, ::OnePadValue{N}) where N = print(io, "BitPacking.OnePad(", N, ")")
+Base.show(io::IO, ::ZeroPad{N}) where N = print(io, ZeroPad, "(", N, ")")
+Base.show(io::IO, ::OnePad{N}) where N = print(io, OnePad, "(", N, ")")
 
 function Base.show(io::IO, nt::NarrowTuple)
-    print(io, "@NarrowTuple(")
+    print(io, var"@NarrowTuple", "(")
     for (i, x) in enumerate(Tuple(nt))
         i > 1 && print(io, ", ")
         show(io, x)
@@ -502,7 +499,7 @@ function Base.show(io::IO, ::Type{T}) where {T<:NarrowTuple}
         return invoke(show, Tuple{IO,Type}, io, T)
     end
 
-    print(io, "@NarrowTuple{")
+    print(io, var"@NarrowTuple", "{")
     show_narrow_tuple_fields(io, Ts)
     print(io, "}")
 end

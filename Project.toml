@@ -1,6 +1,6 @@
 name = "BitPacking"
 uuid = "b58c8408-13c4-4787-8733-7038ae624acf"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Anton Oresten <antonoresten@proton.me> and contributors"]
 
 [deps]
