@@ -4,9 +4,8 @@ using BitPacking: NarrowArray, bitwidth
 
 import Adapt
 import cuTile as ct
-using cuTile: KernelAdaptor, TileArray
 
-struct ReinterpretTileArray{T,N,A<:TileArray{UInt8,N}}
+struct ReinterpretTileArray{T,N,A<:ct.TileArray{UInt8,N}} <: ct.AbstractTileArray{T,N}
     parent::A
 end
 
@@ -20,7 +19,7 @@ function Base.size(arr::ReinterpretTileArray, i::Integer)
 end
 Base.size(arr::ReinterpretTileArray) = ntuple(i -> size(arr, i), Val(ndims(arr)))
 
-function Adapt.adapt_structure(to::KernelAdaptor, arr::NarrowArray)
+function Adapt.adapt_structure(to::ct.KernelAdaptor, arr::NarrowArray)
     parent = Adapt.adapt(to, reinterpret(UInt8, arr))
     return ReinterpretTileArray{eltype(arr),ndims(parent),typeof(parent)}(parent)
 end
