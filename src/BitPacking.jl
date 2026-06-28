@@ -1,11 +1,12 @@
 module BitPacking
 
-import Adapt
 using Republic
+import Adapt
 
 @public bitwidth
 export NArray, NVector, NMatrix
 export NarrowArray, NarrowVector, NarrowMatrix
+export Narrow
 export NarrowTuple, @NarrowTuple
 @public Pad, ZeroPad, OnePad
 

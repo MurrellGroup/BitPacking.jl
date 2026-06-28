@@ -137,8 +137,8 @@ function Base.reinterpret(::Type{T}, arr::NarrowArray{S}) where {T,S}
     end
 end
 
-function Base.Broadcast.broadcasted(::Type{T}, arr::NarrowArray) where T
-    isbitstype(T) || return Base.Broadcast.Broadcasted(T, (arr,))
+function Broadcast.broadcasted(::Type{T}, arr::NarrowArray) where T
+    isbitstype(T) || return Broadcast.Broadcasted(T, (arr,))
 
     L = length(eltype(parent(arr)))
     chunks = SVector{L,T}.(parent(arr))
@@ -147,11 +147,72 @@ end
 
 Base.copy(arr::NarrowArray) = reinterpret(eltype(arr), map(SArray, parent(arr)))
 
+"""
+    Narrow{T}
+
+Representation tag for the packed form of logical element type `T`. `Narrow` has
+no instances; it exists purely for dispatch: passing `Narrow{T}` selects the
+packed [`NarrowArray{T}`](@ref) form where plain `T` selects the unpacked form.
+
+| operation     | with `T`                        | with `Narrow{T}`                |
+|:--------------|:--------------------------------|:--------------------------------|
+| `reinterpret` | `reinterpret(T, ::NarrowArray)` | `reinterpret(Narrow{T}, data)`  |
+| broadcast     | `T.(::NarrowArray)`             | `Narrow{T}.(array)`             |
+
+For broadcast these are value conversions: `T.(narr)` unpacks to dense `T`
+values and `Narrow{T}.(array)` packs values into a `NarrowArray{T}`. For
+`reinterpret` they are instead bit-preserving views of the same buffer in the two
+layouts: `reinterpret(T, narr)` views the packed bits as `T`, while
+`reinterpret(Narrow{T}, data)` views an existing array of packed chunks as a
+`NarrowArray{T}` without copying.
+
+`Narrow{T}.(array)` makes the narrowing explicit where `NarrowArray{T}(array)`
+hides it; the equivalent in-place form is `dest .= expr` for a preallocated
+`NarrowArray{T}` destination. All forms use the default chunk length
+`pack_count(T)`, so the leading dimension must be a whole number of chunks.
+"""
+abstract type Narrow{T} end
+
+# Pack `dense` (logical values) into `chunks` by reinterpreting each run of `L`
+# values along the first dimension as one `NVector{T,L}`. The fused `.=` writes
+# straight into the existing `chunks`, so no packed temporary is allocated.
+function _pack_into!(chunks, ::Type{T}, ::Val{L}, dense::AbstractArray{S}) where {T,L,S}
+    if S === T
+        chunks .= NVector{T,L}.(reinterpret(NTuple{L,T}, dense))
+    else
+        chunks .= NVector{T,L}.(SVector{L,S}.(reinterpret(NTuple{L,S}, dense)))
+    end
+    return chunks
+end
+
+# `dest .= expr` materializes the (fused) broadcast once, then packs it directly
+# into `dest`'s existing parent at `dest`'s own chunk length `L`.
+function Base.copyto!(dest::NarrowArray{T,N,L}, bc::Broadcast.Broadcasted{Nothing}) where {T,N,L}
+    axes(dest) == axes(bc) ||
+        throw(DimensionMismatch("destination axes $(axes(dest)) do not match broadcast axes $(axes(bc))"))
+    dense = Broadcast.materialize(Broadcast.broadcasted(bc.f, bc.args...))
+    _pack_into!(parent(dest), T, Val(L), dense)
+    return dest
+end
+
+Base.similar(arr::NarrowArray) = NarrowArray(similar(parent(arr)))
+
+# `Narrow{T}.(x)` packs the (fused) broadcast `x` into a NarrowArray{T}. Routing
+# through the constructor reuses its vectorized, backend-generic packing, so the
+# result follows the backend of `x` rather than allocating a host `Array`.
+_narrow_broadcast(::Type{T}, x) where T = NarrowArray{T}(Broadcast.materialize(x))
+
+Broadcast.broadcasted(::Type{Narrow{T}}, x) where T = _narrow_broadcast(T, x)
+Broadcast.broadcasted(::Type{Narrow{T}}, x::NarrowArray) where T = _narrow_broadcast(T, x)
+
+Base.reinterpret(::Type{Narrow{T}}, arr::AbstractArray) where T =
+    NarrowArray(reinterpret(narrow_chunk_type(T), arr))
+
 function Base.print_array(io::IO, arr::NarrowArray)
     host = Adapt.adapt(Array, arr)
     if host isa AbstractVecOrMat
-        return invoke(Base.print_array, Tuple{IO, AbstractVecOrMat}, io, host)
+        return @invoke Base.print_array(io::IO, host::AbstractVecOrMat)
     else
-        return invoke(Base.print_array, Tuple{IO, AbstractArray}, io, host)
+        return @invoke Base.print_array(io::IO, host::AbstractArray)
     end
 end

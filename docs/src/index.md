@@ -18,6 +18,7 @@ BitPacking.bitwidth
 ```@docs
 NArray
 NarrowArray
+Narrow
 ```
 
 ## Narrow tuples

@@ -321,4 +321,64 @@ bits(x) = x
         @test_throws ArgumentError reinterpret(UInt16, narrow)
     end
 
+    @testset "Narrow" begin
+        values = Bool[1, 0, 1, 0, 1, 0, 1, 0]
+
+        # Narrow{T}.(arr) packs into a NarrowArray{T}
+        packed = Narrow{Bool}.(values)
+        @test packed isa NarrowVector{Bool}
+        @test copy(packed) == values
+        @test packed == NarrowArray{Bool}(values)
+
+        # the inner expression fuses, narrowing happens at the boundary
+        fused = Narrow{Bool}.(.!values)
+        @test fused isa NarrowVector{Bool}
+        @test copy(fused) == .!values
+
+        # reinterpret(Narrow{T}, bytes) views packed bytes without copying
+        bytes = UInt8[0x55]
+        viewed = reinterpret(Narrow{Bool}, bytes)
+        @test viewed isa NarrowVector{Bool}
+        @test copy(viewed) == values
+        bytes[1] = 0x00
+        @test copy(viewed) == falses(8)
+
+        # destination broadcasting packs into preallocated narrow storage
+        dest = similar(NarrowArray{Bool}(values))
+        @test dest isa NarrowVector{Bool}
+        @test size(dest) == size(values)
+        dest .= values
+        @test copy(dest) == values
+        dest .= .!values
+        @test copy(dest) == .!values
+
+        # float4 round trip via both packing forms
+        f4_values = Float4_E2M1FN[float4(0x01), float4(0x02), float4(0x03), float4(0x04)]
+        f4_packed = Narrow{Float4_E2M1FN}.(f4_values)
+        @test f4_packed isa NarrowVector{Float4_E2M1FN}
+        @test collect(reinterpret(UInt8, f4_packed)) == UInt8[0x21, 0x43]
+        @test bits.(copy(reinterpret(Narrow{Float4_E2M1FN}, UInt8[0x21, 0x43]))) == bits.(f4_values)
+
+        # cross-type packing converts before packing, matching the constructor
+        @test Narrow{Float4_E2M1FN}.(UInt8[0x01, 0x02, 0x03, 0x04]) == f4_packed
+
+        # matrix destination chunks along the first dimension
+        src = repeat(values, 1, 2)
+        mat = similar(NarrowArray{Bool}(src))
+        mat .= src
+        @test copy(mat) == src
+
+        # cross-type destination broadcast converts before packing
+        f4_dest = similar(f4_packed)
+        f4_dest .= UInt8[0x01, 0x02, 0x03, 0x04]
+        @test collect(reinterpret(UInt8, f4_dest)) == UInt8[0x21, 0x43]
+
+        # Narrow{T}.(narr) dispatches on a NarrowArray source
+        @test Narrow{Bool}.(packed) == packed
+
+        # print_array handles arrays beyond vectors and matrices
+        arr3 = NarrowArray{Bool}(reshape(repeat(values, 4), 8, 2, 2))
+        @test contains(sprint(show, MIME("text/plain"), arr3), "NarrowArray")
+    end
+
 end
