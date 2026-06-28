@@ -367,6 +367,18 @@ bits(x) = x
         mat = similar(NarrowArray{Bool}(src))
         mat .= src
         @test copy(mat) == src
+
+        # cross-type destination broadcast converts before packing
+        f4_dest = similar(f4_packed)
+        f4_dest .= UInt8[0x01, 0x02, 0x03, 0x04]
+        @test collect(reinterpret(UInt8, f4_dest)) == UInt8[0x21, 0x43]
+
+        # Narrow{T}.(narr) dispatches on a NarrowArray source
+        @test Narrow{Bool}.(packed) == packed
+
+        # print_array handles arrays beyond vectors and matrices
+        arr3 = NarrowArray{Bool}(reshape(repeat(values, 4), 8, 2, 2))
+        @test contains(sprint(show, MIME("text/plain"), arr3), "NarrowArray")
     end
 
 end
