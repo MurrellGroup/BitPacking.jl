@@ -148,30 +148,36 @@ end
 Base.copy(arr::NarrowArray) = reinterpret(eltype(arr), map(SArray, parent(arr)))
 
 """
-    Narrow{T}
+    Narrow(T)
 
-Representation tag for the packed form of logical element type `T`. `Narrow` has
-no instances; it exists purely for dispatch: passing `Narrow{T}` selects the
-packed [`NarrowArray{T}`](@ref) form where plain `T` selects the unpacked form.
+Representation tag for the packed form of logical element type `T`. A `Narrow`
+instance substitutes for a `Type` in array operations: passing `Narrow(T)`
+selects the packed [`NarrowArray{T}`](@ref) form where plain `T` selects the
+unpacked form.
 
-| operation     | with `T`                        | with `Narrow{T}`                |
-|:--------------|:--------------------------------|:--------------------------------|
-| `reinterpret` | `reinterpret(T, ::NarrowArray)` | `reinterpret(Narrow{T}, data)`  |
-| broadcast     | `T.(::NarrowArray)`             | `Narrow{T}.(array)`             |
+| operation     | with `T`                        | with `Narrow(T)`                  |
+|:--------------|:--------------------------------|:----------------------------------|
+| `reinterpret` | `reinterpret(T, ::NarrowArray)` | `reinterpret(Narrow(T), data)`    |
+| broadcast     | `T.(::NarrowArray)`             | `Narrow(T).(array)`               |
+| `similar`     | `similar(array, T, dims)`       | `similar(array, Narrow(T), dims)` |
 
 For broadcast these are value conversions: `T.(narr)` unpacks to dense `T`
-values and `Narrow{T}.(array)` packs values into a `NarrowArray{T}`. For
+values and `Narrow(T).(array)` packs values into a `NarrowArray{T}`. For
 `reinterpret` they are instead bit-preserving views of the same buffer in the two
 layouts: `reinterpret(T, narr)` views the packed bits as `T`, while
-`reinterpret(Narrow{T}, data)` views an existing array of packed chunks as a
-`NarrowArray{T}` without copying.
+`reinterpret(Narrow(T), data)` views an existing array of packed chunks as a
+`NarrowArray{T}` without copying. `similar(array, Narrow(T), dims)` allocates an
+uninitialized `NarrowArray{T}` of logical size `dims` whose chunk parent follows
+the backend of `array`.
 
-`Narrow{T}.(array)` makes the narrowing explicit where `NarrowArray{T}(array)`
+`Narrow(T).(array)` makes the narrowing explicit where `NarrowArray{T}(array)`
 hides it; the equivalent in-place form is `dest .= expr` for a preallocated
 `NarrowArray{T}` destination. All forms use the default chunk length
 `pack_count(T)`, so the leading dimension must be a whole number of chunks.
 """
-abstract type Narrow{T} end
+struct Narrow{T} end
+
+Narrow(::Type{T}) where T = Narrow{T}()
 
 # Pack `dense` (logical values) into `chunks` by reinterpreting each run of `L`
 # values along the first dimension as one `NVector{T,L}`. The fused `.=` writes
@@ -195,18 +201,54 @@ function Base.copyto!(dest::NarrowArray{T,N,L}, bc::Broadcast.Broadcasted{Nothin
     return dest
 end
 
-Base.similar(arr::NarrowArray) = NarrowArray(similar(parent(arr)))
+# The dense forms delegate to the parent so the result follows its backend.
+Base.similar(arr::NarrowArray, T::Type, dims::Dims) = similar(parent(arr), T, dims)
 
-# `Narrow{T}.(x)` packs the (fused) broadcast `x` into a NarrowArray{T}. Routing
+# The eltype-less forms stay narrow and preserve the array's own chunk length.
+Base.similar(arr::NarrowArray) = NarrowArray(similar(parent(arr)))
+function Base.similar(arr::NarrowArray{T,<:Any,L}, dims::Dims) where {T,L}
+    first(dims) % L == 0 ||
+        throw(ArgumentError("the first dimension of a NarrowArray{$T} with chunk length $L must be divisible by $L, got $(first(dims))"))
+    return NarrowArray(similar(parent(arr), (first(dims) ÷ L, Base.tail(dims)...)))
+end
+
+# `dims` is the logical size: `size(similar(arr, Narrow(T), dims)) == dims`.
+function Base.similar(arr::AbstractArray, ::Narrow{T}, dims::Dims) where T
+    isempty(dims) &&
+        throw(ArgumentError("a NarrowArray{$T} needs at least one dimension to chunk along"))
+    L = pack_count(T)
+    first(dims) % L == 0 ||
+        throw(ArgumentError("the first dimension of a NarrowArray{$T} must be divisible by $L, got $(first(dims))"))
+    return NarrowArray(similar(arr, narrow_chunk_type(T), (first(dims) ÷ L, Base.tail(dims)...)))
+end
+
+Base.similar(arr::AbstractArray, n::Narrow) = similar(arr, n, size(arr))
+Base.similar(arr::AbstractArray, n::Narrow, dims::Integer...) = similar(arr, n, map(Int, dims))
+
+# `Narrow(T).(x)` packs the (fused) broadcast `x` into a NarrowArray{T}. Routing
 # through the constructor reuses its vectorized, backend-generic packing, so the
 # result follows the backend of `x` rather than allocating a host `Array`.
-_narrow_broadcast(::Type{T}, x) where T = NarrowArray{T}(Broadcast.materialize(x))
+Broadcast.broadcasted(::Narrow{T}, x) where T = NarrowArray{T}(Broadcast.materialize(x))
 
-Broadcast.broadcasted(::Type{Narrow{T}}, x) where T = _narrow_broadcast(T, x)
-Broadcast.broadcasted(::Type{Narrow{T}}, x::NarrowArray) where T = _narrow_broadcast(T, x)
-
-Base.reinterpret(::Type{Narrow{T}}, arr::AbstractArray) where T =
+Base.reinterpret(::Narrow{T}, arr::AbstractArray) where T =
     NarrowArray(reinterpret(narrow_chunk_type(T), arr))
+
+# Deprecated: the `Narrow{T}` type form is replaced by the `Narrow(T)` instance
+# form. The second `broadcasted` method resolves the ambiguity with
+# `broadcasted(::Type{T}, arr::NarrowArray)` above.
+function Broadcast.broadcasted(::Type{Narrow{T}}, x) where T
+    Base.depwarn("`Narrow{$T}.(x)` is deprecated, use `Narrow($T).(x)` instead.", :broadcasted)
+    return Broadcast.broadcasted(Narrow(T), x)
+end
+function Broadcast.broadcasted(::Type{Narrow{T}}, x::NarrowArray) where T
+    Base.depwarn("`Narrow{$T}.(x)` is deprecated, use `Narrow($T).(x)` instead.", :broadcasted)
+    return Broadcast.broadcasted(Narrow(T), x)
+end
+
+function Base.reinterpret(::Type{Narrow{T}}, arr::AbstractArray) where T
+    Base.depwarn("`reinterpret(Narrow{$T}, arr)` is deprecated, use `reinterpret(Narrow($T), arr)` instead.", :reinterpret)
+    return reinterpret(Narrow(T), arr)
+end
 
 function Base.print_array(io::IO, arr::NarrowArray)
     host = Adapt.adapt(Array, arr)

@@ -324,20 +324,20 @@ bits(x) = x
     @testset "Narrow" begin
         values = Bool[1, 0, 1, 0, 1, 0, 1, 0]
 
-        # Narrow{T}.(arr) packs into a NarrowArray{T}
-        packed = Narrow{Bool}.(values)
+        # Narrow(T).(arr) packs into a NarrowArray{T}
+        packed = Narrow(Bool).(values)
         @test packed isa NarrowVector{Bool}
         @test copy(packed) == values
         @test packed == NarrowArray{Bool}(values)
 
         # the inner expression fuses, narrowing happens at the boundary
-        fused = Narrow{Bool}.(.!values)
+        fused = Narrow(Bool).(.!values)
         @test fused isa NarrowVector{Bool}
         @test copy(fused) == .!values
 
-        # reinterpret(Narrow{T}, bytes) views packed bytes without copying
+        # reinterpret(Narrow(T), bytes) views packed bytes without copying
         bytes = UInt8[0x55]
-        viewed = reinterpret(Narrow{Bool}, bytes)
+        viewed = reinterpret(Narrow(Bool), bytes)
         @test viewed isa NarrowVector{Bool}
         @test copy(viewed) == values
         bytes[1] = 0x00
@@ -354,13 +354,13 @@ bits(x) = x
 
         # float4 round trip via both packing forms
         f4_values = Float4_E2M1FN[float4(0x01), float4(0x02), float4(0x03), float4(0x04)]
-        f4_packed = Narrow{Float4_E2M1FN}.(f4_values)
+        f4_packed = Narrow(Float4_E2M1FN).(f4_values)
         @test f4_packed isa NarrowVector{Float4_E2M1FN}
         @test collect(reinterpret(UInt8, f4_packed)) == UInt8[0x21, 0x43]
-        @test bits.(copy(reinterpret(Narrow{Float4_E2M1FN}, UInt8[0x21, 0x43]))) == bits.(f4_values)
+        @test bits.(copy(reinterpret(Narrow(Float4_E2M1FN), UInt8[0x21, 0x43]))) == bits.(f4_values)
 
         # cross-type packing converts before packing, matching the constructor
-        @test Narrow{Float4_E2M1FN}.(UInt8[0x01, 0x02, 0x03, 0x04]) == f4_packed
+        @test Narrow(Float4_E2M1FN).(UInt8[0x01, 0x02, 0x03, 0x04]) == f4_packed
 
         # matrix destination chunks along the first dimension
         src = repeat(values, 1, 2)
@@ -373,8 +373,33 @@ bits(x) = x
         f4_dest .= UInt8[0x01, 0x02, 0x03, 0x04]
         @test collect(reinterpret(UInt8, f4_dest)) == UInt8[0x21, 0x43]
 
-        # Narrow{T}.(narr) dispatches on a NarrowArray source
+        # Narrow(T).(narr) dispatches on a NarrowArray source
+        @test Narrow(Bool).(packed) == packed
+
+        # similar(arr, Narrow(T), dims) allocates narrow storage of logical size
+        sim = similar(values, Narrow(Bool), (16,))
+        @test sim isa NarrowVector{Bool}
+        @test size(sim) == (16,)
+        @test parent(sim) isa Vector
+        @test similar(values, Narrow(Bool), 16) isa NarrowVector{Bool}
+        @test size(similar(values, Narrow(Bool))) == size(values)
+        @test size(similar(packed, Narrow(Float4_E2M1FN), (2, 3))) == (2, 3)
+        @test_throws ArgumentError similar(values, Narrow(Bool), (4,))
+        @test_throws ArgumentError similar(values, Narrow(Bool), ())
+
+        # eltype-less similar stays narrow; dims are logical
+        @test similar(packed) isa NarrowVector{Bool}
+        @test size(similar(packed)) == size(packed)
+        @test size(similar(packed, (16,))) == (16,)
+        @test_throws ArgumentError similar(packed, (4,))
+
+        # similar with a plain eltype is dense
+        @test similar(packed, UInt8, (3,)) isa Vector{UInt8}
+
+        # deprecated Narrow{T} type forms still work
+        @test Narrow{Bool}.(values) == packed
         @test Narrow{Bool}.(packed) == packed
+        @test copy(reinterpret(Narrow{Bool}, UInt8[0x55])) == values
 
         # print_array handles arrays beyond vectors and matrices
         arr3 = NarrowArray{Bool}(reshape(repeat(values, 4), 8, 2, 2))
