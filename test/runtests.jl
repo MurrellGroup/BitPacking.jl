@@ -1,3 +1,33 @@
+# The cuTile extension tests are opt-in, since cuTile pulls in a CUDA toolchain:
+#
+#     BITPACKING_TEST_CUTILE=true julia --project=test test/runtests.jl
+#
+# It is installed into a temporary environment rather than being a dependency of
+# this project, so the default `Pkg.test()` run is unchanged, and Julia 1.10 —
+# below cuTile's own floor of 1.11 — resolves as it always did. The environment
+# has to exist before BitPacking is loaded: on 1.11 an extension is only
+# triggered for a package loaded from an environment that already knows about
+# the trigger.
+const CUTILE_REQUESTED = get(ENV, "BITPACKING_TEST_CUTILE", "false") == "true"
+const TEST_CUTILE = CUTILE_REQUESTED && VERSION >= v"1.11"
+
+if CUTILE_REQUESTED && !TEST_CUTILE
+    @info "skipping the cuTile extension tests: cuTile requires Julia 1.11 or later, running $VERSION"
+end
+
+if TEST_CUTILE
+    using Pkg
+    Pkg.activate(; temp=true)
+    Pkg.develop(PackageSpec(path=joinpath(@__DIR__, "..")))
+    # cuTile is pinned exactly: the codegen tests match emitted Tile IR, which
+    # is not something upstream keeps stable across releases. Widen to "0.3" to
+    # track the `[compat]` bound for the weak dependency instead.
+    # CUDACore is a dependency of cuTile, so asking for it explicitly (to reach
+    # `functional`, `CuArray` and `@cuda` in the device tests) costs nothing.
+    Pkg.add([PackageSpec(name="cuTile", version="0.3.2"), PackageSpec(name="Microfloats"),
+             PackageSpec(name="CUDACore")])
+end
+
 using BitPacking
 using Test
 
@@ -405,5 +435,7 @@ bits(x) = x
         arr3 = NarrowArray{Bool}(reshape(repeat(values, 4), 8, 2, 2))
         @test contains(sprint(show, MIME("text/plain"), arr3), "NarrowArray")
     end
+
+    TEST_CUTILE && include("cutile.jl")
 
 end
