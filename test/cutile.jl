@@ -11,6 +11,8 @@ using Test
 
 import cuTile as ct
 import Microfloats
+import CUDACore
+using CUDACore: CuArray, @cuda
 
 # Microfloats provides both halves of what these tests need: `bitwidth` for
 # BitPacking's packing, and the Tile IR dtype mapping through cuTile's own
@@ -65,6 +67,11 @@ narrow_tile_array(::Type{T}, sizes::Dims) where T =
         # types are a plain pass-through
         @test size(narrow_tile_array(Bool, (8,))) == (64,)
         @test size(narrow_tile_array(FP8, (8,))) == (8,)
+
+        # `NarrowArray` packs 6-bit values four to three bytes, but a tile view
+        # rescales the leading dimension by whole bytes, so it has no shape here
+        @test_throws ArgumentError narrow_tile_array(Microfloats.Float6_E3M2FN, (8,))
+        @test_throws ArgumentError narrow_tile_array(Float32, (8,))
     end
 
     @testset "codegen" begin
@@ -128,6 +135,54 @@ narrow_tile_array(::Type{T}, sizes::Dims) where T =
             return
         end
         @test contains(tile_ir(annotated_kernel, Tuple{vector_arg,vector_arg}), "unpack")
+    end
+
+    # What the host tests cannot reach: adapting a device-backed `NarrowArray`,
+    # and running the packed load/store against real memory.
+    @testset "device" begin
+        if CUDACore.functional()
+            function copy_kernel!(X, Y)
+                i = ct.bid(1)
+                ct.store(Y, i, ct.load(X, i, (64,)))
+                return
+            end
+
+            round_trip(src, dst) = Array(reinterpret(UInt8, parent(dst))) ==
+                                   Array(reinterpret(UInt8, parent(src)))
+
+            # Adapting a device-backed `NarrowArray` is the piece the host tests
+            # cannot cover; it works on any device, packed element type or not.
+            src = NarrowArray{FP4}(CuArray(FP4.(Float32.(1:64) ./ 8)))
+            adapted = BitPacking.Adapt.adapt(ct.KernelAdaptor(), src)
+            @test adapted isa ct.AbstractTileArray{FP4,1}
+            @test size(adapted) == size(src) == (64,)
+            @test parent(adapted) isa ct.TileArray{UInt8,1}
+            @test size(parent(adapted)) == (Int32(32),)
+
+            # A byte-wide element type makes the wrapper a pass-through, and its
+            # tile type is one every Tile IR device supports, so the load/store
+            # round trip runs here rather than only on Blackwell.
+            bytes_src = NarrowArray{UInt8}(CuArray(UInt8.(1:64)))
+            bytes_dst = similar(bytes_src)
+            @cuda backend=ct blocks=(1,) copy_kernel!(bytes_src, bytes_dst)
+            CUDACore.synchronize()
+            @test round_trip(bytes_src, bytes_dst)
+
+            # The packed round trip needs a device whose backend supports the FP4
+            # tile type, which `tileiras` rejects below Blackwell — as it does
+            # every microfloat type, FP8 included.
+            capability = CUDACore.capability(CUDACore.device())
+            if capability >= v"10.0"
+                dst = similar(src)
+                @cuda backend=ct blocks=(1,) copy_kernel!(src, dst)
+                CUDACore.synchronize()
+                @test round_trip(src, dst)
+            else
+                @info "device is not Blackwell: skipping the packed FP4 kernel" capability
+            end
+        else
+            @info "no CUDA device: skipping the cuTile device tests"
+        end
     end
 
 end
