@@ -12,9 +12,11 @@ Republic = "27243419-9dde-4721-b67c-fd63626fea7f"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [weakdeps]
+cuDNN = "02a925ec-e4fe-4b08-9a7e-0d78e3d38ccd"
 cuTile = "0dea8319-8c4a-4662-a73d-20234d115b9a"
 
 [extensions]
+cuDNNExt = "cuDNN"
 cuTileExt = "cuTile"
 
 [compat]
