@@ -68,12 +68,35 @@ function NarrowArray{T,N,L}(arr::AbstractArray{S,N}) where {T,N,L,S}
         throw(ArgumentError("the first dimension of a NarrowArray{$T,$N,$L} input must be divisible by $chunk_length, got $(size(arr, 1))"))
 
     chunks = if S === T
-        NVector{T,chunk_length}.(reinterpret(NTuple{chunk_length,T}, arr))
+        NVector{T,chunk_length}.(dense_chunks(Val(chunk_length), arr))
     else
-        NVector{T,chunk_length}.(SVector{chunk_length,S}.(reinterpret(NTuple{chunk_length,S}, arr)))
+        NVector{T,chunk_length}.(SVector{chunk_length,S}.(dense_chunks(Val(chunk_length), arr)))
     end
     return NarrowArray(chunks)
 end
+
+# `reinterpret` refuses arrays of a primitive type with unused bits (Julia
+# 1.14+), so for those the conversions between dense values and chunks go
+# through raw bits instead, at the cost of a temporary. They map closures over
+# `T` because `from_raw_bits.(T, x)` does not infer when `T` is a static
+# parameter, and GPU broadcasts need it to.
+
+# The first dimension of `dense` as runs of `L` values, each an `NTuple`.
+function dense_chunks(::Val{L}, dense::AbstractArray{T}) where {L,T}
+    has_unused_bits(T) || return reinterpret(NTuple{L,T}, dense)
+    raw = reinterpret(NTuple{L,unsigned_type(sizeof(T))}, raw_bits.(dense))
+    return Broadcast.broadcasted(chunk -> map(bits -> from_raw_bits(T, bits), chunk), raw)
+end
+
+# The inverse of `dense_chunks`: runs of values, flattened into the first
+# dimension.
+function dense_values(::Type{T}, chunks::AbstractArray) where T
+    has_unused_bits(T) || return reinterpret(T, chunks)
+    raw = reinterpret(unsigned_type(sizeof(T)), raw_chunk.(chunks))
+    return map(bits -> from_raw_bits(T, bits), raw)
+end
+
+raw_chunk(xs) = raw_bits.(Tuple(xs))
 
 NarrowArray{T}(arr::NarrowArray{T}) where T = arr
 NarrowArray{T,N}(arr::NarrowArray{T,N}) where {T,N} = arr
@@ -142,10 +165,10 @@ function Broadcast.broadcasted(::Type{T}, arr::NarrowArray) where T
 
     L = length(eltype(parent(arr)))
     chunks = SVector{L,T}.(parent(arr))
-    return reinterpret(T, chunks)
+    return dense_values(T, chunks)
 end
 
-Base.copy(arr::NarrowArray) = reinterpret(eltype(arr), map(SArray, parent(arr)))
+Base.copy(arr::NarrowArray{T,<:Any,L}) where {T,L} = dense_values(T, SVector{L,T}.(parent(arr)))
 
 """
     Narrow(T)
@@ -184,9 +207,9 @@ Narrow(::Type{T}) where T = Narrow{T}()
 # straight into the existing `chunks`, so no packed temporary is allocated.
 function _pack_into!(chunks, ::Type{T}, ::Val{L}, dense::AbstractArray{S}) where {T,L,S}
     if S === T
-        chunks .= NVector{T,L}.(reinterpret(NTuple{L,T}, dense))
+        chunks .= NVector{T,L}.(dense_chunks(Val(L), dense))
     else
-        chunks .= NVector{T,L}.(SVector{L,S}.(reinterpret(NTuple{L,S}, dense)))
+        chunks .= NVector{T,L}.(SVector{L,S}.(dense_chunks(Val(L), dense)))
     end
     return chunks
 end
