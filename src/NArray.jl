@@ -68,7 +68,7 @@ NArray{T,N,S}(data::D) where {T,N,S<:NTuple{N,Any},D<:Unsigned} =
 bitwidth(::Type{T}) where T<:NArray = bitwidth(eltype(T)) * length(T)
 
 function NArray{T,N,S}(xs::NTuple{L,T}) where {T,N,S<:NTuple{N,Any},L}
-    unpacked_bytes = reinterpret.(unsigned_type(sizeof(T)), xs)
+    unpacked_bytes = raw_bits.(xs)
     data = pack(Val(bitwidth(T)), unpacked_bytes)
     arr = NArray{T,N,S,typeof(data)}(data)
     length(arr) == L || throw(ArgumentError("Type expects $(length(arr)) element(s), but got $L."))
@@ -93,7 +93,7 @@ NVector(xs::NTuple{L,T}) where {L,T} = NVector{T,L}(xs)
 
 function Base.Tuple(v::NArray)
     unpacked_bytes = unpack(Val(bitwidth(eltype(v))), Val(length(v)), v.data)
-    xs = reinterpret.(eltype(v), unpacked_bytes)::NTuple{length(v)}
+    xs = from_raw_bits.(eltype(v), unpacked_bytes)::NTuple{length(v)}
     return xs
 end
 
@@ -114,7 +114,7 @@ function Base.getindex(arr::NArray{T}, i::Int) where T
     W = bitwidth(T)
     S = length(arr)
     u = packed_getindex(Val(W), Val(S), arr.data, i)
-    return reinterpret(T, u)
+    return from_raw_bits(T, u)
 end
 
 Base.broadcastable(v::NArray{<:Any,<:Any,S}) where S = SArray{S}(Tuple(v))
