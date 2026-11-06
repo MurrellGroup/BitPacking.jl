@@ -42,14 +42,12 @@ function check_bitwidth(::Type{T}) where T
     return Int(W)
 end
 
-"""
-    storage_type(bits)
-
-The storage for `bits` packed bits, rounded up to whole bytes: the unsigned
-integer of that many bytes when there is one, and otherwise a tuple of the
-widest of `UInt64`, `UInt32`, `UInt16` and `UInt8` that divides them, so that
-the storage is no larger than the bytes it holds.
-"""
+#     storage_type(bits)
+#
+# The storage for `bits` packed bits, rounded up to whole bytes: the unsigned
+# integer of that many bytes when there is one, and otherwise a tuple of the
+# widest of `UInt64`, `UInt32`, `UInt16` and `UInt8` that divides them, so that
+# the storage is no larger than the bytes it holds.
 function storage_type(bits::Integer)
     bits >= 0 || throw(ArgumentError("packed storage needs a non-negative bit count, got $bits"))
     nbytes = cld(bits, 8)
@@ -75,11 +73,9 @@ function _field_expr(source, first, width, dest, ::Type{U}) where U
     return expr
 end
 
-"""
-    pack(Val(W), D, raws::NTuple{L,<:Unsigned})::D
-
-Pack the low `W` bits of each of `raws`, in order, into storage of type `D`.
-"""
+#     pack(Val(W), D, raws::NTuple{L,<:Unsigned})::D
+#
+# Pack the low `W` bits of each of `raws`, in order, into storage of type `D`.
 @generated function pack(::Val{W}, ::Type{D}, raws::Tuple{Vararg{Unsigned,L}}) where {W,D,L}
     U = limb_type(D)
     b = 8 * sizeof(U)
@@ -99,11 +95,9 @@ Pack the low `W` bits of each of `raws`, in order, into storage of type `D`.
     return D <: Unsigned ? only(limbs) : Expr(:tuple, limbs...)
 end
 
-"""
-    unpack(Val(W), Val(L), R, data)::NTuple{L,R}
-
-The first `L` packed `W`-bit values of `data`, each in the low bits of an `R`.
-"""
+#     unpack(Val(W), Val(L), R, data)::NTuple{L,R}
+#
+# The first `L` packed `W`-bit values of `data`, each in the low bits of an `R`.
 @generated function unpack(::Val{W}, ::Val{L}, ::Type{R}, data::Storage) where {W,L,R}
     U = limb_type(data)
     b = 8 * sizeof(U)
@@ -123,11 +117,9 @@ The first `L` packed `W`-bit values of `data`, each in the low bits of an `R`.
     return Expr(:tuple, values...)
 end
 
-"""
-    packed_getindex(Val(W), R, data, i)::R
-
-Packed `W`-bit value `i` (1-based, unchecked) of `data`, in the low bits of an `R`.
-"""
+#     packed_getindex(Val(W), R, data, i)::R
+#
+# Packed `W`-bit value `i` (1-based, unchecked) of `data`, in the low bits of an `R`.
 @inline function packed_getindex(::Val{W}, ::Type{R}, data::D, i::Int) where {W,R,D<:Storage}
     b = 8 * sizeof(limb_type(D))
     # unsigned, so that the division by the limb width is a shift and a mask
