@@ -157,10 +157,7 @@ function narrow_mask(::Type{U}, width::Int) where U<:Unsigned
     return U((big(1) << width) - 1)
 end
 
-function field_raw_expr(name, index, T)
-    U = unsigned_type(sizeof(T))
-    return :($U(reinterpret($U, Core.getfield($name, $index))))
-end
+field_raw_expr(name, index) = :(raw_bits(Core.getfield($name, $index)))
 
 function _typed_or_expr(::Type{U}, terms) where U<:Unsigned
     isempty(terms) && return :($U(0))
@@ -259,7 +256,7 @@ bitwidth(::Type{<:NarrowTuple{Ts}}) where Ts = sum(bitwidth, Ts.parameters; init
                 expr = :($D($(narrow_mask(D, W))))
             else
                 U = unsigned_type(sizeof(T))
-                expr = field_raw_expr(:xs, index, T)
+                expr = field_raw_expr(:xs, index)
                 W < 8 * sizeof(U) && (expr = :($expr & $(narrow_mask(U, W))))
                 expr = :($D($expr))
             end
@@ -290,7 +287,7 @@ bitwidth(::Type{<:NarrowTuple{Ts}}) where Ts = sum(bitwidth, Ts.parameters; init
                 T <: OnePad || continue
                 expr = :(UInt8($(_low_mask(width))))
             else
-                expr = field_raw_expr(:xs, field_index, T)
+                expr = field_raw_expr(:xs, field_index)
                 source_shift > 0 && (expr = :($expr >>> $source_shift))
                 width < 8 && (expr = :($expr & $(_low_mask(width))))
                 expr = :(UInt8($expr))
@@ -366,7 +363,7 @@ NarrowTuple(xs::Ts) where Ts<:Tuple = NarrowTuple{layout_tuple_type(Ts)}(xs)
             start > 0 && (expr = :($expr >>> $start))
             W < 8 * sizeof(D) && (expr = :($expr & $(narrow_mask(D, W))))
             expr = :($U($expr))
-            push!(values, :(reinterpret($T, $expr)))
+            push!(values, :(from_raw_bits($T, $expr)))
         end
         return Expr(:tuple, values...)
     end
@@ -402,7 +399,7 @@ NarrowTuple(xs::Ts) where Ts<:Tuple = NarrowTuple{layout_tuple_type(Ts)}(xs)
         end
 
         expr = _typed_or_expr(U, terms)
-        push!(values, :(reinterpret($T, $expr)))
+        push!(values, :(from_raw_bits($T, $expr)))
     end
 
     return Expr(:tuple, values...)

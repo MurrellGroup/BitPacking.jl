@@ -436,6 +436,8 @@ bits(x) = x
         @test contains(sprint(show, MIME("text/plain"), arr3), "NarrowArray")
     end
 
+    isdefined(Core, :bitsizeof) && include("unused_bits.jl")
+
     TEST_CUTILE && include("cutile.jl")
 
 end

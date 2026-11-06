@@ -11,6 +11,8 @@ Documentation for [BitPacking](https://github.com/MurrellGroup/BitPacking.jl).
 
 ```@docs
 BitPacking.bitwidth
+BitPacking.raw_bits
+BitPacking.from_raw_bits
 ```
 
 ## Narrow-element arrays

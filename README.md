@@ -12,6 +12,8 @@ BitPacking.jl provides small bit-packed building blocks for Julia array code:
 - `NarrowTuple` and `@NarrowTuple` pack heterogeneous isbits values, with optional padding fields.
 
 Packages can extend `BitPacking.bitwidth(::Type)` for their own narrow scalar types.
+On Julia 1.14 and later, a primitive type declared with its real width, such as
+`primitive type Float4 4 end`, needs no overload.
 
 ## Examples
 
