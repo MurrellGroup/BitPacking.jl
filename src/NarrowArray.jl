@@ -256,23 +256,6 @@ Broadcast.broadcasted(::Narrow{T}, x) where T = NarrowArray{T}(Broadcast.materia
 Base.reinterpret(::Narrow{T}, arr::AbstractArray) where T =
     NarrowArray(reinterpret(narrow_chunk_type(T), arr))
 
-# Deprecated: the `Narrow{T}` type form is replaced by the `Narrow(T)` instance
-# form. The second `broadcasted` method resolves the ambiguity with
-# `broadcasted(::Type{T}, arr::NarrowArray)` above.
-function Broadcast.broadcasted(::Type{Narrow{T}}, x) where T
-    Base.depwarn("`Narrow{$T}.(x)` is deprecated, use `Narrow($T).(x)` instead.", :broadcasted)
-    return Broadcast.broadcasted(Narrow(T), x)
-end
-function Broadcast.broadcasted(::Type{Narrow{T}}, x::NarrowArray) where T
-    Base.depwarn("`Narrow{$T}.(x)` is deprecated, use `Narrow($T).(x)` instead.", :broadcasted)
-    return Broadcast.broadcasted(Narrow(T), x)
-end
-
-function Base.reinterpret(::Type{Narrow{T}}, arr::AbstractArray) where T
-    Base.depwarn("`reinterpret(Narrow{$T}, arr)` is deprecated, use `reinterpret(Narrow($T), arr)` instead.", :reinterpret)
-    return reinterpret(Narrow(T), arr)
-end
-
 function Base.print_array(io::IO, arr::NarrowArray)
     host = Adapt.adapt(Array, arr)
     if host isa AbstractVecOrMat

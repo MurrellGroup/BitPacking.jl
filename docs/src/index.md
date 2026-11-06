@@ -22,13 +22,3 @@ NArray
 NarrowArray
 Narrow
 ```
-
-## Narrow tuples
-
-```@docs
-NarrowTuple
-@NarrowTuple
-BitPacking.Pad
-BitPacking.ZeroPad
-BitPacking.OnePad
-```

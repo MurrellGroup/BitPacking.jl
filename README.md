@@ -9,7 +9,9 @@ BitPacking.jl provides small bit-packed building blocks for Julia array code:
 
 - `NArray`, `NVector`, and `NMatrix` pack a static group of narrow values into one storage value.
 - `NarrowArray`, `NarrowVector`, and `NarrowMatrix` view an array of packed groups as a logical array of values.
-- `NarrowTuple` and `@NarrowTuple` pack heterogeneous isbits values, with optional padding fields.
+
+For packed records of mixed field types, see
+[PackedStructs.jl](https://github.com/JuliaData/PackedStructs.jl).
 
 Packages can extend `BitPacking.bitwidth(::Type)` for their own narrow scalar types.
 On Julia 1.14 and later, a primitive type declared with its real width, such as
@@ -32,13 +34,6 @@ packed = NarrowArray{Bool}(x)
 
 copy(packed) == x        # true
 parent(packed)           # Vector{NVector{Bool,8}}
-```
-
-```julia
-t = @NarrowTuple(0x12, true)
-
-Tuple(t)                 # (0x12, true)
-BitPacking.bitwidth(t)   # 9
 ```
 
 ## Installation

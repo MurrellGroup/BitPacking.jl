@@ -41,19 +41,6 @@ Base.convert(::Type{UInt8}, x::NativeFloat4) = BitPacking.raw_bits(x)
         @test Tuple(v6) === native6.((0x01, 0x02, 0x03, 0x04))
     end
 
-    @testset "NarrowTuple" begin
-        x24 = Core.Intrinsics.trunc_int(NativeUInt24, 0x00bcdef0)
-        T = @NarrowTuple{NativeFloat4,NativeUInt24,NativeFloat4}
-        @test T === NarrowTuple{Tuple{NativeFloat4,NativeUInt24,NativeFloat4},UInt32}
-        nt = T(native4(0x0a), x24, native4(0x03))
-        @test nt.data == 0x3bcdef0a
-        @test Tuple(nt) === (native4(0x0a), x24, native4(0x03))
-
-        nt6 = NarrowTuple((native6(0x2a), 0xbc))
-        @test nt6.data == (0x2a, 0x2f)
-        @test Tuple(nt6) === (native6(0x2a), 0xbc)
-    end
-
     @testset "NarrowArray" begin
         values = native4.(UInt8[0x01, 0x02, 0x03, 0x04])
         narrow = NarrowArray{NativeFloat4}(values)

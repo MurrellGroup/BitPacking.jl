@@ -7,8 +7,6 @@ import Adapt
 export NArray, NVector, NMatrix
 export NarrowArray, NarrowVector, NarrowMatrix
 export Narrow
-export NarrowTuple, @NarrowTuple
-@public Pad, ZeroPad, OnePad
 
 @static if isdefined(Core, :bitsizeof)
     # Julia 1.14 lets a primitive type declare fewer bits than it stores, as in
@@ -29,8 +27,8 @@ Return the number of value bits used by `T` or by the type of `x`.
 The default for bitstypes is `Core.bitsizeof(T)` on Julia 1.14 and later, which
 is the declared width of a primitive type such as `primitive type Float4 4 end`,
 and `8 * sizeof(T)` before that. `Bool` is specialized to one bit. Packages and
-users can overload this for narrow types declared with whole bytes, packed
-containers, and layout markers such as [`ZeroPad`](@ref).
+users can overload this for narrow types declared with whole bytes and for
+packed containers.
 """
 bitwidth(::Type{T}) where T = isbitstype(T) ? bitsizeof(T) : error("$T is not a bitstype")
 bitwidth(::T) where T = bitwidth(T)
@@ -68,7 +66,6 @@ end
 
 include("packing.jl")
 include("NArray.jl")
-include("NarrowTuple.jl")
 include("NarrowArray.jl")
 
 end
