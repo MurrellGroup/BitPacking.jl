@@ -76,23 +76,24 @@ function NarrowArray{T,N,L}(arr::AbstractArray{S,N}) where {T,N,L,S}
 end
 
 # `reinterpret` refuses arrays of a primitive type with unused bits (Julia
-# 1.14+), so for those the conversions between dense values and chunks go
+# 1.14+) or with an array stride above its `sizeof` (a 24-bit primitive type
+# before 1.14), so for those the conversions between dense values and chunks go
 # through raw bits instead, at the cost of a temporary. They map closures over
 # `T` because `from_raw_bits.(T, x)` does not infer when `T` is a static
 # parameter, and GPU broadcasts need it to.
 
 # The first dimension of `dense` as runs of `L` values, each an `NTuple`.
 function dense_chunks(::Val{L}, dense::AbstractArray{T}) where {L,T}
-    has_unused_bits(T) || return reinterpret(NTuple{L,T}, dense)
-    raw = reinterpret(NTuple{L,unsigned_type(sizeof(T))}, raw_bits.(dense))
+    array_reinterpret_fails(T) || return reinterpret(NTuple{L,T}, dense)
+    raw = reinterpret(NTuple{L,raw_type(T)}, raw_bits.(dense))
     return Broadcast.broadcasted(chunk -> map(bits -> from_raw_bits(T, bits), chunk), raw)
 end
 
 # The inverse of `dense_chunks`: runs of values, flattened into the first
 # dimension.
 function dense_values(::Type{T}, chunks::AbstractArray) where T
-    has_unused_bits(T) || return reinterpret(T, chunks)
-    raw = reinterpret(unsigned_type(sizeof(T)), raw_chunk.(chunks))
+    array_reinterpret_fails(T) || return reinterpret(T, chunks)
+    raw = reinterpret(raw_type(T), raw_chunk.(chunks))
     return map(bits -> from_raw_bits(T, bits), raw)
 end
 
@@ -134,7 +135,8 @@ end
 # bytes, and a `NarrowArray{T}` otherwise. Chunks are whole bytes, so the bits
 # along dimension 1 are a multiple of 8, and when they are also a multiple of
 # `bitwidth(T)` they are whole `T` chunks.
-function Base.reinterpret(::Type{T}, arr::NarrowArray{S}) where {T,S}
+function Base.reinterpret(::Type{T′}, arr::NarrowArray{S}) where {T′,S}
+    T = concrete_element(T′)
     source_bits = bitwidth(S)
     target_bits = check_bitwidth(T)
     T === S && target_bits != 8 * sizeof(T) && return arr

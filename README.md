@@ -25,7 +25,8 @@ using BitPacking
 v = NVector(true, false, true, false, true, false, true, false)
 
 Tuple(v)                 # (true, false, true, false, true, false, true, false)
-reinterpret(UInt8, v)    # 0x55
+BitPacking.raw_bits(v)   # 0x55, the packed bits as one integer
+reinterpret(UInt8, v)    # NVector{UInt8,1}: the same bits as one UInt8
 ```
 
 ```julia

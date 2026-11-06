@@ -82,9 +82,9 @@ bits(x) = x
         @test v[8] === false
         @test BitPacking.bitwidth(v) == 8
         @test BitPacking.bitwidth(typeof(v)) == 8
-        @test reinterpret(Unsigned, v) === 0x55
+        @test BitPacking.raw_bits(v) === 0x55
         @test reinterpret(UInt8, v) === NVector{UInt8,1}(0x55)
-        @test reinterpret(NVector{Bool,8}, 0x55) === v
+        @test BitPacking.from_raw_bits(NVector{Bool,8}, 0x55) === v
 
         b = Broadcast.broadcastable(v)
         @test b isa BitPacking.SVector{8,Bool}
@@ -98,7 +98,7 @@ bits(x) = x
         @test bits(f4[1]) == 0x0a
         @test bits(f4[2]) == 0x03
         @test BitPacking.bitwidth(f4) == 8
-        @test reinterpret(Unsigned, f4) === 0x3a
+        @test BitPacking.raw_bits(f4) === 0x3a
 
         bools9 = (true, false, true, false, true, false, true, false, true)
         v9 = NVector(bools9)
@@ -107,8 +107,8 @@ bits(x) = x
         @test Tuple(v9) == bools9
         @test v9[1] === true
         @test v9[9] === true
-        @test reinterpret(Unsigned, v9) === 0x0155
-        @test reinterpret(NVector{Bool,9}, 0x0155) === v9
+        @test BitPacking.raw_bits(v9) === 0x0155
+        @test BitPacking.from_raw_bits(NVector{Bool,9}, 0x0155) === v9
         @test_throws ArgumentError reinterpret(UInt16, v9)
 
         f6 = NVector((float6(0x01), float6(0x02), float6(0x03), float6(0x04)))
@@ -134,7 +134,7 @@ bits(x) = x
         @test n isa NVector{UInt8,2}
         @test n.data == 0x0201
         @test Tuple(n) == (0x01, 0x02)
-        @test reinterpret(Unsigned, n) === 0x0201
+        @test BitPacking.raw_bits(n) === 0x0201
         @test reinterpret(UInt16, n) === NVector{UInt16,1}(0x0201)
 
         same_uint = NVector{UInt8,2}(sv)

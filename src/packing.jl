@@ -17,7 +17,11 @@ function unsigned_type(N::Integer)
 end
 
 # The unsigned type `raw_bits` returns for `T`
-raw_type(::Type{T}) where T = unsigned_type(sizeof(T))
+function raw_type(::Type{T}) where T
+    sizeof(T) <= 16 ||
+        throw(ArgumentError("$T is $(sizeof(T)) bytes, more than the 16 bytes of the widest raw bits"))
+    return unsigned_type(nextpow(2, max(sizeof(T), 1)))
+end
 
 limb_type(::Type{U}) where U<:Unsigned = U
 limb_type(::Type{Tuple{}}) = UInt8
@@ -30,6 +34,8 @@ limb_count(::Type{<:Tuple{Vararg{Any,K}}}) where K = K
 Base.@propagate_inbounds get_limb(data::Tuple, j::Integer) = data[(j % Int) + 1]
 
 function check_bitwidth(::Type{T}) where T
+    isbitstype(T) ||
+        throw(ArgumentError("element type $T is not a concrete bitstype"))
     W = bitwidth(T)
     W isa Integer && 1 <= W <= MAX_BITWIDTH ||
         throw(ArgumentError("element bitwidth must be from 1 to $MAX_BITWIDTH bits, got $W for $T"))
@@ -137,14 +143,4 @@ Packed `W`-bit value `i` (1-based, unchecked) of `data`, in the low bits of an `
         end
     end
     return value & low_mask(R, W)
-end
-
-# Whether the bits of `data` past the first `bits` are all zero
-function padding_is_zero(data::D, bits::Int) where D<:Storage
-    b = 8 * sizeof(limb_type(D))
-    for j in 0:(limb_count(D) - 1)
-        used = clamp(bits - b * j, 0, b)
-        used < b && !iszero(get_limb(data, j) >> used) && return false
-    end
-    return true
 end

@@ -36,21 +36,23 @@ julia> v = NVector(true, false, true, false, true, false, true, false)
  1
  0
 
-julia> reinterpret(Unsigned, v)
-0x55
 ```
 
 `reinterpret(T, x)` follows the array rule, as for Base arrays: the bits are kept,
 and the length of dimension 1 is rescaled so that the total bit count stays the
-same, throwing when it does not divide. `reinterpret(Unsigned, x)` returns the
-storage word, and `reinterpret(NVector{T,L}, word)` is its inverse.
+same, throwing when it does not divide. An `NArray` is itself an element:
+[`raw_bits`](@ref) returns its bits as one unsigned integer, and
+[`from_raw_bits`](@ref) builds one from them.
 
 ```julia
 julia> reinterpret(UInt8, v)
 1-element NVector{UInt8, 1, UInt8} with indices SOneTo(1):
  0x55
 
-julia> reinterpret(NVector{Bool,8}, 0x0f) == NVector{Bool,8}(1, 1, 1, 1, 0, 0, 0, 0)
+julia> BitPacking.raw_bits(v)
+0x55
+
+julia> BitPacking.from_raw_bits(NVector{Bool,8}, 0x0f) == NVector{Bool,8}(1, 1, 1, 1, 0, 0, 0, 0)
 true
 ```
 
@@ -71,6 +73,15 @@ NArray{T,N,S}(tag::FromStorage, data::D) where {T,N,S<:NTuple{N,Any},D<:Storage}
 
 narray_storage(::Type{T}, ::Type{S}) where {T,S} =
     storage_type(Val(check_bitwidth(T) * StaticArrays.tuple_prod(S)))
+
+# `NVector{T,L}` and the like leave the storage parameter free; as an element
+# type they stand for the one concrete type they can be.
+concrete_element(::Type{T}) where T = T
+function concrete_element(::Type{A}) where {T,N,S,A<:NArray{T,N,S}}
+    C = NArray{T,N,S,narray_storage(T, S)}
+    C <: A || throw(ArgumentError("$(NArray{T,N,S}) stores its bits in $(narray_storage(T, S)), so it is not a $A"))
+    return C
+end
 
 bitwidth(::Type{<:NArray{T,N,S}}) where {T,N,S} = bitwidth(T) * StaticArrays.tuple_prod(S)
 
@@ -133,24 +144,31 @@ Base.broadcastable(v::NArray{<:Any,<:Any,S}) where S = SArray{S}(Tuple(v))
     return Tuple{bits ÷ W′,dims[2:end]...}
 end
 
-function Base.reinterpret(::Type{T′}, v::NArray{T,N,S,D}) where {T′,T,N,S,D}
+function Base.reinterpret(::Type{E}, v::NArray{T,N,S,D}) where {E,T,N,S,D}
+    T′ = concrete_element(E)
     S′ = reinterpret_size(S, Val(bitwidth(T)), Val(check_bitwidth(T′)))
     return NArray{T′,N,S′,D}(FromStorage(), v.data)
 end
 
-function Base.reinterpret(::Type{Unsigned}, v::NArray{T,N,S,D}) where {T,N,S,D}
-    D <: Unsigned ||
-        throw(ArgumentError("$(NArray{T,N,S}) stores its bits in $D, not in an unsigned integer"))
-    return v.data
+# The element protocol, so that an `NArray` can be an element itself. Storage
+# that is a tuple of limbs is joined into one word, as `raw_type` gives it.
+@inline function raw_bits(v::NArray{T,N,S,D}) where {T,N,S,D}
+    D <: Unsigned && return v.data
+    U = raw_type(typeof(v))
+    b = 8 * sizeof(limb_type(D))
+    limbs = ntuple(j -> (v.data[j] % U) << (b * (j - 1)), Val(limb_count(D)))
+    return foldl(|, limbs; init=zero(U))
 end
 
-function Base.reinterpret(::Type{A}, word::U) where {T,N,S,A<:NArray{T,N,S},U<:Unsigned}
+@inline function from_raw_bits(::Type{A}, bits::Unsigned) where {T,N,S,A<:NArray{T,N,S}}
+    C = concrete_element(A)
     D = narray_storage(T, S)
-    NArray{T,N,S,D} <: A ||
-        throw(ArgumentError("$(NArray{T,N,S}) stores its bits in $D, so it is not a $A"))
-    U === D || throw(ArgumentError("$(NArray{T,N,S}) stores its bits in $D, not $U"))
-    bits = bitwidth(NArray{T,N,S})
-    padding_is_zero(word, bits) ||
-        throw(ArgumentError("$word has bits set past the $bits value bits of $(NArray{T,N,S})"))
-    return NArray{T,N,S,D}(FromStorage(), word)
+    U = raw_type(C)
+    word = bits % U
+    nbits = bitwidth(C)
+    nbits < 8 * sizeof(U) && (word &= low_mask(U, nbits))
+    D <: Unsigned && return C(FromStorage(), word % D)
+    b = 8 * sizeof(limb_type(D))
+    limbs = ntuple(j -> (word >> (b * (j - 1))) % limb_type(D), Val(limb_count(D)))
+    return C(FromStorage(), limbs)
 end

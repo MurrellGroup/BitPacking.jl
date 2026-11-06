@@ -8,6 +8,16 @@ for W in WIDTHS
     @eval BitPacking.bitwidth(::Type{$name}) = $W
 end
 
+primitive type Odd24 24 end
+primitive type Odd40 40 end
+primitive type Odd48 48 end
+primitive type Odd56 56 end
+struct RGB
+    r::UInt8
+    g::UInt8
+    b::UInt8
+end
+
 const WIDTH_TYPES = map(W -> getfield(@__MODULE__, Symbol(:Bits, W)), WIDTHS)
 
 width_type(W) = WIDTH_TYPES[findfirst(==(W), WIDTHS)]
@@ -151,22 +161,72 @@ end
         @test_throws ArgumentError reinterpret(UInt8, z)
     end
 
-    @testset "storage word" begin
+    @testset "NArray as an element" begin
+        raw_bits, from_raw_bits = BitPacking.raw_bits, BitPacking.from_raw_bits
         v = NVector{Float6_E3M2FN,2}(float6(0x01), float6(0x3f))
-        word = @inferred reinterpret(Unsigned, v)
-        @test word === 0x0fc1
-        @test @inferred(reinterpret(NVector{Float6_E3M2FN,2}, word)) === v
-        @test reinterpret(typeof(v), word) === v
+        @test @inferred(raw_bits(v)) === 0x0fc1
+        @test @inferred(from_raw_bits(NVector{Float6_E3M2FN,2}, 0x0fc1)) === v
+        @test from_raw_bits(typeof(v), 0x0fc1) === v
+        # bits above the width are ignored, per the element protocol
+        @test from_raw_bits(NVector{Float6_E3M2FN,2}, 0xffffffc1) === v
+        @test_throws ArgumentError from_raw_bits(NVector{Float6_E3M2FN,2,UInt32}, 0x0fc1)
 
-        # padding bits must be zero, and the word must be the storage type
-        @test_throws ArgumentError reinterpret(NVector{Float6_E3M2FN,2}, 0x1fc1)
-        @test_throws ArgumentError reinterpret(NVector{Float6_E3M2FN,2}, 0x00000fc1)
-        @test_throws ArgumentError reinterpret(NVector{Float6_E3M2FN,2,UInt32}, 0x0fc1)
-
-        # storage that is not a single unsigned integer has no word
+        # storage as a tuple of limbs is joined into the next unsigned integer
         v3 = NVector{UInt8,3}(0x01, 0x02, 0x03)
         @test v3.data === (0x01, 0x02, 0x03)
-        @test_throws ArgumentError reinterpret(Unsigned, v3)
+        @test raw_bits(v3) === 0x00030201
+        @test from_raw_bits(NVector{UInt8,3}, 0xff030201) === v3
+        v12 = NVector{UInt32,3}(0x01020304, 0x05060708, 0x090a0b0c)
+        @test v12.data isa NTuple{3,UInt32}
+        @test raw_bits(v12) === 0x00000000_090a0b0c_05060708_01020304
+        @test from_raw_bits(NVector{UInt32,3}, raw_bits(v12)) === v12
+        @test_throws ArgumentError raw_bits(NVector(ntuple(Float32, 8)))
+
+        # vectors of vectors pack, and the bits are the same as flat
+        f4x2 = NVector(float4(0x1), float4(0x2))
+        nested = NVector(f4x2, f4x2, f4x2, f4x2)
+        @test nested isa NVector{typeof(f4x2),4,UInt32}
+        @test raw_bits(nested) === 0x21212121
+        @test nested[3] === f4x2
+        @test reinterpret(Float4_E2M1FN, nested) === NVector(ntuple(i -> float4(isodd(i) ? 0x1 : 0x2), 8))
+        @test reinterpret(NVector{Float4_E2M1FN,2}, NVector{UInt8,2}(0x21, 0x43)) ===
+              NVector(NVector(float4(0x1), float4(0x2)), NVector(float4(0x3), float4(0x4)))
+        b6 = NVector{Bool,6}(1, 0, 1, 1, 0, 1)
+        @test Tuple(NVector(b6, b6, b6, b6)) === (b6, b6, b6, b6)
+        narrow = NarrowArray{typeof(b6)}(fill(b6, 8))
+        @test copy(narrow) == fill(b6, 8)
+        @test collect(reinterpret(UInt8, narrow)) == repeat([0x6d, 0xdb, 0xb6], 2)
+
+        # an element type must be concrete
+        u = NVector{Bool,8}(ntuple(_ -> true, 8))
+        @test_throws ArgumentError NVector{NVector{Bool,8},2}((u, u))
+        @test NVector{NVector{Bool,8,UInt8},2}((u, u)).data === 0xffff
+        @test_throws ArgumentError reinterpret(String, v)
+        @test_throws ArgumentError reinterpret(String, NarrowArray{Bool}(trues(8)))
+    end
+
+    @testset "odd sizes" begin
+        raw_bits, from_raw_bits = BitPacking.raw_bits, BitPacking.from_raw_bits
+        # before Julia 1.14 these have a `sizeof` of 3, 5, 6 and 7 bytes, and an
+        # array stride of 4 or 8
+        for (T, W) in ((Odd24, 24), (Odd40, 40), (Odd48, 48), (Odd56, 56))
+            x = Core.Intrinsics.trunc_int(T, 0x0123456789abcdef)
+            @test BitPacking.bitwidth(T) == W
+            @test raw_bits(x) === 0x0123456789abcdef & BitPacking.low_mask(UInt64, W) % BitPacking.raw_type(T)
+            @test from_raw_bits(T, raw_bits(x)) === x
+            v = NVector(x, x, x)
+            # elementwise: on Julia 1.10, `===` of tuples of these compares padding
+            @test all(Tuple(v) .=== (x, x, x))
+            xs = fill(x, 4)
+            narrow = NarrowArray{T}(xs)
+            @test copy(narrow) == xs
+            @test length(reinterpret(UInt8, narrow)) == 4W ÷ 8
+        end
+        rgb = RGB(0x01, 0x02, 0x03)
+        @test raw_bits(rgb) === 0x00030201
+        @test from_raw_bits(RGB, 0xff030201) === rgb
+        @test Tuple(NVector(rgb, rgb)) === (rgb, rgb)
+        @test NVector(rgb, rgb).data === (0x0201, 0x0103, 0x0302)
     end
 
     @testset "constructors take values" begin
