@@ -168,6 +168,17 @@ narrow_tile_array(::Type{T}, sizes::Dims) where T =
             CUDACore.synchronize()
             @test round_trip(bytes_src, bytes_dst)
 
+            # Broadcasting a device array into a device-backed NarrowArray
+            # packs on the device, rather than writing it element by element.
+            values = CuArray(FP4.(Float32.(1:64) ./ 8))
+            dest = similar(src)
+            dest .= values
+            @test Array(reinterpret(UInt8, parent(dest))) == Array(reinterpret(UInt8, parent(src)))
+            bools = CuArray(rand(Bool, 64))
+            bits_dest = similar(Narrow(Bool).(bools))
+            bits_dest .= .!bools
+            @test Array(copy(bits_dest)) == .!Array(bools)
+
             # The packed round trip needs a device whose backend supports the FP4
             # tile type, which `tileiras` rejects below Blackwell — as it does
             # every microfloat type, FP8 included.

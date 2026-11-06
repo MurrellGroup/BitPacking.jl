@@ -130,28 +130,22 @@ function narrow_chunk_type(::Type{T}, L=pack_count(T)) where T
     return NArray{T,1,Tuple{chunk_length},storage_type(bitwidth(T) * chunk_length)}
 end
 
-function reinterpret_bytes(arr::NarrowArray)
-    E = eltype(parent(arr))
-    bitwidth(E) == 8 * sizeof(E) ||
-        throw(ArgumentError("cannot reinterpret a NarrowArray with padded chunk storage"))
-    return reinterpret(UInt8, parent(arr))
-end
-
+# The same bits along dimension 1 as `T`: a plain array when `T` fills its
+# bytes, and a `NarrowArray{T}` otherwise. Chunks are whole bytes, so the bits
+# along dimension 1 are a multiple of 8, and when they are also a multiple of
+# `bitwidth(T)` they are whole `T` chunks.
 function Base.reinterpret(::Type{T}, arr::NarrowArray{S}) where {T,S}
     source_bits = bitwidth(S)
-    target_bits = bitwidth(T)
-    target_bits > 0 ||
-        throw(ArgumentError("cannot reinterpret to $T with non-positive bitwidth $target_bits"))
+    target_bits = check_bitwidth(T)
+    T === S && target_bits != 8 * sizeof(T) && return arr
     (size(arr, 1) * source_bits) % target_bits == 0 ||
         throw(ArgumentError("cannot reinterpret $(size(arr, 1)) $source_bits-bit value(s) as $target_bits-bit $T"))
 
-    bytes = reinterpret_bytes(arr)
+    bytes = reinterpret(UInt8, parent(arr))
     if target_bits == 8 * sizeof(T)
         return reinterpret(T, bytes)
-    elseif target_bits < 8 && sizeof(T) == 1
-        return NarrowArray(reinterpret(narrow_chunk_type(T), bytes))
     else
-        throw(ArgumentError("cannot reinterpret packed bytes as $T with bitwidth $target_bits and sizeof $(sizeof(T))"))
+        return NarrowArray(reinterpret(narrow_chunk_type(T), bytes))
     end
 end
 
@@ -169,24 +163,25 @@ Base.copy(arr::NarrowArray{T,<:Any,L}) where {T,L} = dense_values(T, SVector{L,T
     Narrow(T)
 
 Representation tag for the packed form of logical element type `T`. A `Narrow`
-instance substitutes for a `Type` in array operations: passing `Narrow(T)`
-selects the packed [`NarrowArray{T}`](@ref) form where plain `T` selects the
-unpacked form.
+instance substitutes for a `Type` in array operations whose result is a
+[`NarrowArray{T}`](@ref):
 
-| operation     | with `T`                        | with `Narrow(T)`                  |
-|:--------------|:--------------------------------|:----------------------------------|
-| `reinterpret` | `reinterpret(T, ::NarrowArray)` | `reinterpret(Narrow(T), data)`    |
-| broadcast     | `T.(::NarrowArray)`             | `Narrow(T).(array)`               |
-| `similar`     | `similar(array, T, dims)`       | `similar(array, Narrow(T), dims)` |
+| operation     | to a `NarrowArray{T}`             | from a `NarrowArray`         |
+|:--------------|:----------------------------------|:-----------------------------|
+| `reinterpret` | `reinterpret(Narrow(T), data)`    | `reinterpret(T, narr)`       |
+| broadcast     | `Narrow(T).(array)`               | `T.(narr)`                   |
+| `similar`     | `similar(array, Narrow(T), dims)` | `similar(narr, T, dims)`     |
 
-For broadcast these are value conversions: `T.(narr)` unpacks to dense `T`
-values and `Narrow(T).(array)` packs values into a `NarrowArray{T}`. For
-`reinterpret` they are instead bit-preserving views of the same buffer in the two
-layouts: `reinterpret(T, narr)` views the packed bits as `T`, while
-`reinterpret(Narrow(T), data)` views an existing array of packed chunks as a
-`NarrowArray{T}` without copying. `similar(array, Narrow(T), dims)` allocates an
-uninitialized `NarrowArray{T}` of logical size `dims` whose chunk parent follows
-the backend of `array`.
+For broadcast these are value conversions: `Narrow(T).(array)` packs values into
+a `NarrowArray{T}` and `T.(narr)` unpacks to dense `T` values. `reinterpret`
+never converts and never unpacks: `reinterpret(Narrow(T), data)` views the bytes
+or packed chunks of `data` as a `NarrowArray{T}`, and `reinterpret(T, narr)`
+views the packed bits of `narr` as `T`, which is a plain array when `T` fills
+its bytes (`UInt8`, `Float32`) and a `NarrowArray{T}` otherwise (`Bool`, a 4-bit
+float). Both keep the bits and rescale dimension 1. `similar(array, Narrow(T),
+dims)` allocates an uninitialized `NarrowArray{T}` of logical size `dims` whose
+chunk parent follows the backend of `array`, and `similar(narr, T, dims)` a dense
+array on the backend of `narr`.
 
 `Narrow(T).(array)` makes the narrowing explicit where `NarrowArray{T}(array)`
 hides it; the equivalent in-place form is `dest .= expr` for a preallocated
@@ -197,25 +192,16 @@ struct Narrow{T} end
 
 Narrow(::Type{T}) where T = Narrow{T}()
 
-# Pack `dense` (logical values) into `chunks` by reinterpreting each run of `L`
-# values along the first dimension as one `NVector{T,L}`. The fused `.=` writes
-# straight into the existing `chunks`, so no packed temporary is allocated.
-function _pack_into!(chunks, ::Type{T}, ::Val{L}, dense::AbstractArray{S}) where {T,L,S}
-    if S === T
-        chunks .= NVector{T,L}.(dense_chunks(Val(L), dense))
-    else
-        chunks .= NVector{T,L}.(SVector{L,S}.(dense_chunks(Val(L), dense)))
-    end
-    return chunks
-end
-
-# `dest .= expr` materializes the (fused) broadcast once, then packs it directly
-# into `dest`'s existing parent at `dest`'s own chunk length `L`.
-function Base.copyto!(dest::NarrowArray{T,N,L}, bc::Broadcast.Broadcasted{Nothing}) where {T,N,L}
-    axes(dest) == axes(bc) ||
-        throw(DimensionMismatch("destination axes $(axes(dest)) do not match broadcast axes $(axes(bc))"))
-    dense = Broadcast.materialize(Broadcast.broadcasted(bc.f, bc.args...))
-    _pack_into!(parent(dest), T, Val(L), dense)
+# `dest .= expr` evaluates the (fused) broadcast into a dense temporary of `T`
+# on the backend of `dest`, with the usual broadcast rules for its shape, then
+# packs it straight into the existing parent at `dest`'s own chunk length `L`.
+# This takes over `materialize!` rather than `copyto!`, because a GPU source
+# gives the broadcast a GPU style whose `copyto!` would write `dest` element by
+# element.
+function Broadcast.materialize!(dest::NarrowArray{T,N,L}, bc::Broadcast.Broadcasted) where {T,N,L}
+    dense = similar(parent(dest), T, size(dest))
+    dense .= bc
+    parent(dest) .= NVector{T,L}.(dense_chunks(Val(L), dense))
     return dest
 end
 

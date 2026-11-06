@@ -74,6 +74,42 @@ reference_integer(xs) = sum(
         @test copy(reinterpret(Narrow(T), collect(bytes))) == xs
     end
 
+    @testset "NarrowArray reinterpret across widths" begin
+        xs = [random_value(rng, width_type(12)) for _ in 1:8, _ in 1:2]
+        narrow = NarrowArray{width_type(12)}(xs)
+        @test reinterpret(width_type(12), narrow) === narrow
+        bytes = collect(reinterpret(UInt8, narrow))
+        for (T, n) in ((Bool, 96), (width_type(3), 32), (width_type(24), 4), (UInt16, 6),
+                       (width_type(48), 2), (Float6_E3M2FN, 16))
+            r = reinterpret(T, narrow)
+            @test size(r) == (n, 2)
+            @test collect(reinterpret(UInt8, r)) == bytes
+            if 8 * sizeof(T) == BitPacking.bitwidth(T)
+                # a plain array, which goes back to packed form through `Narrow`
+                @test r isa AbstractMatrix{T} && !(r isa NarrowArray)
+                @test copy(reinterpret(Narrow(width_type(12)), r)) == xs
+            else
+                @test r isa NarrowMatrix{T}
+                @test copy(reinterpret(width_type(12), r)) == xs
+            end
+        end
+        @test_throws ArgumentError reinterpret(width_type(10), narrow)
+        @test_throws ArgumentError reinterpret(UInt64, narrow)
+    end
+
+    @testset "broadcasting into a NarrowArray" begin
+        T = width_type(12)
+        xs = [random_value(rng, T) for _ in 1:4, _ in 1:3]
+        dest = similar(NarrowArray{T}(xs))
+        dest .= xs
+        @test copy(dest) == xs
+        dest .= xs[:, 1]
+        @test copy(dest) == repeat(xs[:, 1], 1, 3)
+        dest .= Ref(xs[1, 1])
+        @test all(==(xs[1, 1]), copy(dest))
+        @test_throws DimensionMismatch dest .= xs[1:2, :]
+    end
+
     @testset "values beyond 128 bits" begin
         @test_throws ArgumentError NVector{NTuple{3,UInt64},1}(((0x1, 0x2, 0x3),))
     end

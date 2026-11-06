@@ -264,6 +264,9 @@ bits(x) = x
         @test_throws ArgumentError NarrowArray{Float4_E2M1FN,1,4}(f4_values[1:2])
         @test bits.(copy(reinterpret(Float4_E2M1FN, narrow))) == UInt8[0x05, 0x05]
         @test_throws ArgumentError reinterpret(UInt16, narrow)
+        # a type that fills its bytes is always a plain view, even of itself
+        @test !(reinterpret(UInt8, NarrowArray{UInt8}(UInt8[1, 2])) isa NarrowArray)
+        @test reinterpret(Bool, narrow) === narrow
     end
 
     @testset "Narrow" begin
