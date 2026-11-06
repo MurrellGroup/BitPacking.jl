@@ -34,34 +34,46 @@ bitwidth(::Type{T}) where T = isbitstype(T) ? bitsizeof(T) : error("$T is not a 
 bitwidth(::T) where T = bitwidth(T)
 bitwidth(::Type{Bool}) = 1
 
+# The `U` with its low `width` bits set
+@inline low_mask(::Type{U}, width::Integer) where U<:Unsigned =
+    width >= 8 * sizeof(U) ? typemax(U) : (one(U) << width) - one(U)
+
 """
     raw_bits(x)::Unsigned
 
-Return the bits of `x` as the unsigned integer type of the same size, like
-`reinterpret(UInt8, x)` for a one-byte `x`.
+Return the value of `x` as an unsigned integer of `sizeof(x)` bytes: its
+[`bitwidth`](@ref) value bits in the low bits, and zeros above them.
 
-Unlike `reinterpret`, this also accepts primitive types that declare fewer bits
-than they store, such as `primitive type Float4 4 end` on Julia 1.14 and later.
-Their unused high bits read as zero.
+This is how BitPacking reads every element it packs, and it differs from
+`reinterpret` in two ways. A primitive type that declares fewer bits than it
+stores, such as `primitive type Float4 4 end` on Julia 1.14 and later, is
+zero-extended, where `reinterpret` refuses it. A type declared with whole bytes
+but a narrower `bitwidth`, such as `Bool` or a 4-bit float stored in a byte, has
+the bits above its width cleared, whatever they held.
 
 See also [`from_raw_bits`](@ref).
 """
 @inline function raw_bits(x::T) where T
     U = unsigned_type(sizeof(T))
-    return has_unused_bits(T) ? Core.Intrinsics.zext_int(U, x) : reinterpret(U, x)
+    has_unused_bits(T) && return Core.Intrinsics.zext_int(U, x)
+    bits = reinterpret(U, x)
+    return bitwidth(T) < 8 * sizeof(T) ? bits & low_mask(U, bitwidth(T)) : bits
 end
 
 """
     from_raw_bits(T, bits::Unsigned)::T
 
-Return the `T` whose bits are `bits`, an unsigned integer of `sizeof(T)` bytes.
-The inverse of [`raw_bits`](@ref).
-
-For a primitive type that declares fewer bits than it stores, bits of `bits`
-beyond its width are dropped.
+Return the `T` whose value bits are the low [`bitwidth`](@ref)`(T)` bits of
+`bits`; the bits above them are ignored, whatever the width of `bits`. The
+inverse of [`raw_bits`](@ref): `from_raw_bits(T, raw_bits(x)) === x` for every
+`x` whose bits above its width are zero.
 """
 @inline function from_raw_bits(::Type{T}, bits::Unsigned) where T
-    return has_unused_bits(T) ? Core.Intrinsics.trunc_int(T, bits) : reinterpret(T, bits)
+    U = unsigned_type(sizeof(T))
+    word = bits % U
+    has_unused_bits(T) && return Core.Intrinsics.trunc_int(T, word)
+    bitwidth(T) < 8 * sizeof(T) && (word &= low_mask(U, bitwidth(T)))
+    return reinterpret(T, word)
 end
 
 include("packing.jl")

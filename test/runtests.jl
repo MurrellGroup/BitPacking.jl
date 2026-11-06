@@ -50,6 +50,22 @@ bits(x::Float6_E3M2FN) = reinterpret(UInt8, x)
 bits(x) = x
 
 @testset "BitPacking.jl" begin
+    @testset "raw bits" begin
+        # bits above a narrow type's width read as zero, and are ignored on the way in
+        @test BitPacking.raw_bits(float4(0xfa)) === 0x0a
+        @test BitPacking.raw_bits(BitPacking.from_raw_bits(Float4_E2M1FN, 0xfa)) === 0x0a
+        @test bits(BitPacking.from_raw_bits(Float4_E2M1FN, 0xfa)) === 0x0a
+        @test BitPacking.raw_bits(true) === 0x01
+        @test BitPacking.from_raw_bits(Bool, 0x03) === true
+        @test BitPacking.from_raw_bits(Bool, 0x02) === false
+
+        # the input may be wider or narrower than the type
+        @test BitPacking.from_raw_bits(UInt8, 0x0102) === 0x02
+        @test BitPacking.from_raw_bits(UInt16, 0x01) === 0x0001
+        @test BitPacking.from_raw_bits(Int16, 0xffff) === Int16(-1)
+        @test BitPacking.raw_bits(Int8(-1)) === 0xff
+    end
+
     @testset "NArray" begin
         bools = (true, false, true, false, true, false, true, false)
         v = NVector(bools)
