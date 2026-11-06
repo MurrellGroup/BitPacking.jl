@@ -378,6 +378,21 @@ bits(x) = x
 
     isdefined(Core, :bitsizeof) && include("unused_bits.jl")
 
+    # A variable that a closure captures and that is reassigned is boxed, which
+    # costs speed on the CPU and does not compile in GPU code.
+    # Generated methods have no lowered source to read.
+    @testset "no boxed variables" begin
+        has_box(m) = try
+            occursin("Core.Box", string(Base.uncompressed_ast(m)))
+        catch
+            false
+        end
+        boxed = [m for n in names(BitPacking; all=true) if isdefined(BitPacking, n)
+                   for f in (getfield(BitPacking, n),) if f isa Function || f isa Type
+                   for m in methods(f) if m.module === BitPacking && has_box(m)]
+        @test isempty(boxed)
+    end
+
     TEST_CUTILE && include("cutile.jl")
 
 end

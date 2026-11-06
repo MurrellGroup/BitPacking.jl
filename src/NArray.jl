@@ -175,9 +175,9 @@ end
     C = concrete_element(A)
     D = narray_storage(T, S)
     U = raw_type(C)
-    word = bits % U
-    nbits = bitwidth(C)
-    nbits < 8 * sizeof(U) && (word &= low_mask(U, nbits))
+    # assigned once, as the closure below captures it, and a captured variable
+    # that is reassigned is boxed, which GPU code cannot compile
+    word = bitwidth(C) < 8 * sizeof(U) ? (bits % U) & low_mask(U, bitwidth(C)) : bits % U
     D <: Unsigned && return C(FromStorage(), word % D)
     b = 8 * sizeof(limb_type(D))
     limbs = ntuple(j -> (word >> (b * (j - 1))) % limb_type(D), Val(limb_count(D)))
