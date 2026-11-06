@@ -129,6 +129,17 @@ Base.IndexStyle(::Type{<:NArray}) = IndexLinear()
     return from_raw_bits(T, packed_getindex(Val(bitwidth(T)), raw_type(T), v.data, i))
 end
 
+# Replaces one element's bits in a single storage word, rather than unpacking
+# and repacking every element. Tuple storage takes StaticArrays' generic path.
+@inline function Base.setindex(v::NArray{T,N,S,D}, x, i::Int) where {T,N,S,D<:Unsigned}
+    @boundscheck checkbounds(v, i)
+    W = bitwidth(T)
+    shift = UInt(W) * ((i - 1) % UInt)
+    bits = raw_bits(convert(T, x)) % D
+    mask = low_mask(D, W) << shift
+    return NArray{T,N,S,D}(FromStorage(), (v.data & ~mask) | (bits << shift))
+end
+
 Base.broadcastable(v::NArray{<:Any,<:Any,S}) where S = SArray{S}(Tuple(v))
 
 # The size of `S` with dimension 1 rescaled from `W`-bit to `W′`-bit elements

@@ -63,6 +63,11 @@ reference_integer(xs) = sum(
             @test_throws BoundsError v[L + 1]
             @test SVector(v) === SVector(xs)
             @test NArray(SVector(xs)) === v
+            for k in 1:L
+                y = random_value(rng, T)
+                @test Tuple(Base.setindex(v, y, k)) === Base.setindex(xs, y, k)
+            end
+            @test_throws BoundsError Base.setindex(v, xs[1], L + 1)
         end
         xs = ntuple(_ -> random_value(rng, T), 3)
         v = @inferred NVector{T,3}(xs)
@@ -82,6 +87,11 @@ reference_integer(xs) = sum(
         @test size(bytes) == (3L * W ÷ 8, 2)
         @test storage_integer(Tuple(bytes[:, 1])) == reference_integer(xs[:, 1])
         @test copy(reinterpret(Narrow(T), collect(bytes))) == xs
+        y = random_value(rng, T)
+        narrow[L + 1, 2] = y
+        xs[L + 1, 2] = y
+        @test copy(narrow) == xs
+        @test size(NarrowArray{T}(undef, 2L, 3)::NarrowMatrix{T}) == (2L, 3)
     end
 
     @testset "NarrowArray reinterpret across widths" begin
@@ -227,6 +237,16 @@ end
         @test from_raw_bits(RGB, 0xff030201) === rgb
         @test Tuple(NVector(rgb, rgb)) === (rgb, rgb)
         @test NVector(rgb, rgb).data === (0x0201, 0x0103, 0x0302)
+    end
+
+    @testset "undef constructors" begin
+        @test size(NarrowArray{Bool}(undef, 16)::NarrowVector{Bool,8}) == (16,)
+        @test size(NarrowArray{Bool}(undef, (8, 2))::NarrowMatrix{Bool,8}) == (8, 2)
+        @test size(NarrowArray{Bool,1,16}(undef, 32)::NarrowVector{Bool,16}) == (32,)
+        @test size(NarrowArray{Bool,2}(undef, 8, 1)) == (8, 1)
+        @test_throws ArgumentError NarrowArray{Bool}(undef, 10)
+        @test_throws ArgumentError NarrowArray{Bool}(undef)
+        @test_throws ArgumentError NarrowArray{Bool,1,3}(undef, 3)
     end
 
     @testset "constructors take values" begin

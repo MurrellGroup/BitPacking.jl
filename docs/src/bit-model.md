@@ -188,7 +188,7 @@ are not interchangeable with BitPacking's.
 - `reinterpret(T, ::NarrowArray)` works for any width `T`.
 - `copy(x)` and `T.(x)` on a `NarrowArray` return a plain array, not a
   `ReinterpretArray` over an array of `SVector` chunks.
-- `NarrowArray` has `setindex!`.
+- `NarrowArray` has `setindex!`, and `NarrowArray{T}(undef, dims...)`.
 - `NarrowTuple`, `@NarrowTuple`, `Pad`, `ZeroPad` and `OnePad` are removed; see
   PackedStructs.jl. The deprecated `Narrow{T}` forms, `Narrow{T}.(x)` and
   `reinterpret(Narrow{T}, x)`, are removed; use `Narrow(T)`.
