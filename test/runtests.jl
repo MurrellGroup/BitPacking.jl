@@ -20,11 +20,11 @@ if TEST_CUTILE
     Pkg.activate(; temp=true)
     Pkg.develop(PackageSpec(path=joinpath(@__DIR__, "..")))
     # cuTile is pinned exactly: the codegen tests match emitted Tile IR, which
-    # is not something upstream keeps stable across releases. Widen to "0.3" to
+    # is not something upstream keeps stable across releases. Widen to "1" to
     # track the `[compat]` bound for the weak dependency instead.
     # CUDACore is a dependency of cuTile, so asking for it explicitly (to reach
     # `functional`, `CuArray` and `@cuda` in the device tests) costs nothing.
-    Pkg.add([PackageSpec(name="cuTile", version="0.3.2"), PackageSpec(name="Microfloats"),
+    Pkg.add([PackageSpec(name="cuTile", version="1.0.0"), PackageSpec(name="Microfloats"),
              PackageSpec(name="CUDACore")])
 end
 
