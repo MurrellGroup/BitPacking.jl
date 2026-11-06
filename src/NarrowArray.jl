@@ -85,15 +85,22 @@ function dense_chunks(::Val{L}, dense::AbstractArray{T}) where {L,T}
     return Broadcast.broadcasted(chunk -> map(bits -> from_raw_bits(T, bits), chunk), raw)
 end
 
-# The inverse of `dense_chunks`: runs of values, flattened into the first
-# dimension.
-function dense_values(::Type{T}, chunks::AbstractArray) where T
-    array_reinterpret_fails(T) || return reinterpret(T, chunks)
-    raw = reinterpret(raw_type(T), raw_chunk.(chunks))
-    return map(bits -> from_raw_bits(T, bits), raw)
+# The inverse of `dense_chunks`: the values of `arr` as `T`, in a new dense
+# array on the backend of its parent. The unpacked chunks are written straight
+# into the result, viewed as runs of `L` values, so there is no temporary.
+function dense_values(::Type{T}, arr::NarrowArray{<:Any,N,L}) where {T,N,L}
+    chunks = parent(arr)
+    if array_reinterpret_fails(T)
+        raw = similar(chunks, raw_type(T), size(arr))
+        reinterpret(NTuple{L,raw_type(T)}, raw) .= (chunk -> raw_chunk(T, chunk)).(chunks)
+        return map(bits -> from_raw_bits(T, bits), raw)
+    end
+    dense = similar(chunks, T, size(arr))
+    reinterpret(NTuple{L,T}, dense) .= Tuple.(SVector{L,T}.(chunks))
+    return dense
 end
 
-raw_chunk(xs) = raw_bits.(Tuple(xs))
+raw_chunk(::Type{T}, xs) where T = map(x -> raw_bits(convert(T, x)), Tuple(xs))
 
 NarrowArray{T}(arr::NarrowArray{T}) where T = arr
 NarrowArray{T,N}(arr::NarrowArray{T,N}) where {T,N} = arr
@@ -115,11 +122,27 @@ Base.size(arr::NarrowArray, i::Integer) = size(parent(arr), i) * size(eltype(par
 Base.size(arr::NarrowArray) = size(parent(arr)) .* inner_size(arr)
 
 Base.IndexStyle(::Type{<:NarrowArray}) = IndexCartesian()
-function Base.getindex(arr::NarrowArray{T,N}, i::Vararg{Int,N}) where {T,N}
-    outer_inner_i = ntuple(j -> fldmod1(i[j], inner_size(arr, j)), Val(N))
-    outer_i = first.(outer_inner_i)
-    inner_i = last.(outer_inner_i)
-    return parent(arr)[outer_i...][inner_i...]
+# The index of the chunk holding element `i`, and the element's index within it.
+# Chunks run along dimension 1, so only that dimension has an inner index.
+@inline function chunk_index(arr::NarrowArray{<:Any,N}, i::NTuple{N,Int}) where N
+    outer, inner = fldmod1(first(i), inner_size(arr, 1))
+    return (outer, Base.tail(i)...), inner
+end
+
+Base.@propagate_inbounds function Base.getindex(arr::NarrowArray{T,N}, i::Vararg{Int,N}) where {T,N}
+    @boundscheck checkbounds(arr, i...)
+    outer, inner = chunk_index(arr, i)
+    return @inbounds parent(arr)[outer...][inner]
+end
+
+# Writes one element by repacking its chunk. On a GPU parent this is scalar
+# indexing, as for any GPU array.
+Base.@propagate_inbounds function Base.setindex!(arr::NarrowArray{T,N}, x, i::Vararg{Int,N}) where {T,N}
+    @boundscheck checkbounds(arr, i...)
+    outer, inner = chunk_index(arr, i)
+    chunks = parent(arr)
+    @inbounds chunks[outer...] = Base.setindex(chunks[outer...], convert(T, x), inner)
+    return arr
 end
 
 function narrow_chunk_type(::Type{T}, L=pack_count(T)) where T
@@ -150,12 +173,10 @@ end
 function Broadcast.broadcasted(::Type{T}, arr::NarrowArray) where T
     isbitstype(T) || return Broadcast.Broadcasted(T, (arr,))
 
-    L = length(eltype(parent(arr)))
-    chunks = SVector{L,T}.(parent(arr))
-    return dense_values(T, chunks)
+    return dense_values(T, arr)
 end
 
-Base.copy(arr::NarrowArray{T,<:Any,L}) where {T,L} = dense_values(T, SVector{L,T}.(parent(arr)))
+Base.copy(arr::NarrowArray{T}) where T = dense_values(T, arr)
 
 """
     Narrow(T)

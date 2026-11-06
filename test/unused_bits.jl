@@ -96,6 +96,11 @@ Base.convert(::Type{UInt8}, x::NativeFloat4) = BitPacking.raw_bits(x)
         @test Narrow(NativeFloat4).(values) == narrow
         @test copy(reinterpret(Narrow(NativeFloat4), UInt8[0x21, 0x43])) == values
 
+        @test @inferred(copy(narrow)) isa Vector{NativeFloat4}
+        narrow2 = NarrowArray{NativeFloat4}(copy(values))
+        narrow2[2] = native4(0x0f)
+        @test copy(narrow2) == [values[1], native4(0x0f), values[3], values[4]]
+
         dest = similar(narrow)
         dest .= reverse(values)
         @test copy(dest) == reverse(values)

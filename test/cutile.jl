@@ -178,6 +178,10 @@ narrow_tile_array(::Type{T}, sizes::Dims) where T =
             bits_dest = similar(Narrow(Bool).(bools))
             bits_dest .= .!bools
             @test Array(copy(bits_dest)) == .!Array(bools)
+            # unpacking gives a plain device array, allocated once
+            @test copy(bits_dest) isa CuArray{Bool,1}
+            @test UInt8.(bits_dest) isa CuArray{UInt8,1}
+            @test CUDACore.@allocated(copy(bits_dest)) == 64
 
             # The packed round trip needs a device whose backend supports the FP4
             # tile type, which `tileiras` rejects below Blackwell — as it does

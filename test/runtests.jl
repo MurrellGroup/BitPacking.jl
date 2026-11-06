@@ -195,7 +195,7 @@ bits(x) = x
 
         int_values = Int.(narrow)
         @test size(int_values) == size(narrow)
-        @test parent(int_values) isa Vector{BitPacking.SVector{8,Int}}
+        @test int_values isa Vector{Int}
         @test collect(int_values) == Int[1, 0, 1, 0, 1, 0, 1, 0]
 
         uint_values = UInt8[1, 0, 1, 0, 1, 0, 1, 0]
@@ -247,7 +247,7 @@ bits(x) = x
         @test collect(f4_bytes) == UInt8[0x21 0x43]
         f4_uints = UInt8.(f4_matrix)
         @test size(f4_uints) == size(f4_matrix)
-        @test parent(f4_uints) isa Matrix{BitPacking.SVector{2,UInt8}}
+        @test f4_uints isa Matrix{UInt8}
         @test collect(f4_uints) == UInt8[0x01 0x03; 0x02 0x04]
 
         f6_values = Float6_E3M2FN[float6(0x01), float6(0x02), float6(0x03), float6(0x04)]
@@ -267,6 +267,31 @@ bits(x) = x
         # a type that fills its bytes is always a plain view, even of itself
         @test !(reinterpret(UInt8, NarrowArray{UInt8}(UInt8[1, 2])) isa NarrowArray)
         @test reinterpret(Bool, narrow) === narrow
+    end
+
+    @testset "NarrowArray setindex!" begin
+        values = Bool[1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 0]
+        narrow = NarrowArray{Bool}(copy(values))
+        narrow[2] = true
+        values[2] = true
+        @test copy(narrow) == values
+        narrow[16] = 1
+        values[16] = true
+        @test copy(narrow) == values
+        @test_throws BoundsError narrow[17] = true
+        @test_throws BoundsError narrow[17]
+        @test sort(narrow) == sort(values)
+        @test reverse(narrow) == reverse(values)
+        dest = similar(narrow)
+        copyto!(dest, narrow)
+        @test copy(dest) == values
+        fill!(dest, false)
+        @test copy(dest) == falses(16)
+
+        f6 = NarrowArray{Float6_E3M2FN}(reshape(float6.(UInt8.(1:8)), 4, 2))
+        f6[3, 2] = float6(0x3f)
+        @test bits.(copy(f6)) == [0x01 0x05; 0x02 0x06; 0x03 0x3f; 0x04 0x08]
+        @test collect(reinterpret(UInt8, f6))[:, 1] == UInt8[0x81, 0x30, 0x10]
     end
 
     @testset "Narrow" begin
