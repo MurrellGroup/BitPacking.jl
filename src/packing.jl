@@ -1,160 +1,147 @@
-function _check_pack_bitwidth(W)
-    W isa Integer || throw(ArgumentError("bitwidth must be an integer in 1:8, got $W"))
-    1 <= W <= 8 || throw(ArgumentError("bitwidth must be in 1:8, got $W"))
+# Packed storage is one unsigned word or a tuple of unsigned limbs. Values sit
+# LSB-first: value `i` (0-based) of width `W` occupies bits `W*i` to `W*i + W - 1`
+# of the bit stream, and bit `k` of the stream is bit `k % b` of limb `k ÷ b`
+# for `b`-bit limbs. Bits past the last value are padding and always zero.
+
+const Storage = Union{Unsigned,Tuple{Vararg{Unsigned}}}
+
+const MAX_BITWIDTH = 128
+
+function unsigned_type(N::Integer)
+    N ==  1 ? UInt8   :
+    N ==  2 ? UInt16  :
+    N ==  4 ? UInt32  :
+    N ==  8 ? UInt64  :
+    N == 16 ? UInt128 :
+    throw(ArgumentError("there is no $N-byte unsigned integer type"))
+end
+
+# The unsigned type `raw_bits` returns for `T`
+raw_type(::Type{T}) where T = unsigned_type(sizeof(T))
+
+limb_type(::Type{U}) where U<:Unsigned = U
+limb_type(::Type{Tuple{}}) = UInt8
+limb_type(::Type{<:Tuple{U,Vararg{U}}}) where U<:Unsigned = U
+
+limb_count(::Type{<:Unsigned}) = 1
+limb_count(::Type{<:Tuple{Vararg{Any,K}}}) where K = K
+
+@inline get_limb(data::Unsigned, ::Integer) = data
+Base.@propagate_inbounds get_limb(data::Tuple, j::Integer) = data[(j % Int) + 1]
+
+function check_bitwidth(::Type{T}) where T
+    W = bitwidth(T)
+    W isa Integer && 1 <= W <= MAX_BITWIDTH ||
+        throw(ArgumentError("element bitwidth must be from 1 to $MAX_BITWIDTH bits, got $W for $T"))
     return Int(W)
 end
 
-function _check_pack_count(S)
-    S isa Integer || throw(ArgumentError("element count must be an integer, got $S"))
-    S >= 0 || throw(ArgumentError("element count must be non-negative, got $S"))
-    return Int(S)
+"""
+    storage_type(bits)
+
+The storage for `bits` packed bits: the unsigned integer of the bits rounded up
+to whole bytes when there is one, and a tuple of bytes otherwise.
+"""
+function storage_type(bits::Integer)
+    bits >= 0 || throw(ArgumentError("packed storage needs a non-negative bit count, got $bits"))
+    nbytes = cld(bits, 8)
+    nbytes in (1, 2, 4, 8, 16) && return unsigned_type(nbytes)
+    return NTuple{nbytes,UInt8}
 end
 
-function _or_expr(terms)
-    isempty(terms) && return :(0x00)
+@generated storage_type(::Val{B}) where B = storage_type(B)
 
-    expr = first(terms)
-    for term in Iterators.drop(terms, 1)
-        expr = :($expr | $term)
-    end
+function _or_expr(::Type{U}, terms) where U
+    isempty(terms) && return :(zero($U))
+    return foldl((a, b) -> :($a | $b), terms)
+end
+
+# Bits `first:first + width - 1` of `source`, as a `U`, moved up to bit `dest`
+function _field_expr(source, first, width, dest, ::Type{U}) where U
+    expr = source
+    first > 0 && (expr = :($expr >> $first))
+    expr = :($expr % $U)
+    width < 8 * sizeof(U) && (expr = :($expr & $(low_mask(U, width))))
+    dest > 0 && (expr = :($expr << $dest))
     return expr
 end
 
-_low_mask(width) = 0x01 << width - 0x01
+"""
+    pack(Val(W), D, raws::NTuple{L,<:Unsigned})::D
 
-function _unsigned_type_for(total_bits)
-    total_bits <=   8 ? UInt8   :
-    total_bits <=  16 ? UInt16  :
-    total_bits <=  32 ? UInt32  :
-    total_bits <=  64 ? UInt64  :
-    total_bits <= 128 ? UInt128 :
-    nothing
-end
-
-function _pack_part_expr(name, index, source_shift, width, dest_shift)
-    expr = :(Core.getfield($name, $index))
-    source_shift > 0 && (expr = :($expr >> $source_shift))
-    width < 8 && (expr = :($expr & $(_low_mask(width))))
-    dest_shift > 0 && (expr = :($expr << $dest_shift))
-    return expr
-end
-
-@generated function pack(::Val{W}, xs::NTuple{S,UInt8}) where {W,S}
-    width_bits = _check_pack_bitwidth(W)
-    count = _check_pack_count(S)
-    total_bits = width_bits * count
-
-    U = _unsigned_type_for(total_bits)
-    if U !== nothing && count > 0 && 8 * sizeof(U) == total_bits
-        mask = _low_mask(width_bits)
+Pack the low `W` bits of each of `raws`, in order, into storage of type `D`.
+"""
+@generated function pack(::Val{W}, ::Type{D}, raws::Tuple{Vararg{Unsigned,L}}) where {W,D,L}
+    U = limb_type(D)
+    b = 8 * sizeof(U)
+    W * L <= b * limb_count(D) ||
+        return :(throw(ArgumentError($("$D has too few bits for $L $W-bit values"))))
+    limbs = map(0:(limb_count(D) - 1)) do j
+        lo, hi = b * j, b * j + b - 1
         terms = Any[]
-        for i in 0:(count - 1)
-            shift = width_bits * i
-            expr = :(Core.getfield(xs, $(i + 1)))
-            width_bits < 8 && (expr = :($expr & $mask))
-            expr = :($(U)($expr))
-            shift > 0 && (expr = :($expr << $shift))
-            push!(terms, expr)
+        for i in 0:(L - 1)
+            first, last = W * i, W * i + W - 1
+            f, l = max(lo, first), min(hi, last)
+            f <= l || continue
+            push!(terms, _field_expr(:(raws[$(i + 1)]), f - first, l - f + 1, f - lo, U))
         end
-        return _or_expr(terms)
+        _or_expr(U, terms)
     end
-
-    N = cld(total_bits, 8)
-    bytes = Vector{Any}(undef, N)
-    for byte_index in 0:(N - 1)
-        byte_first_bit = 8 * byte_index
-        byte_last_bit = byte_first_bit + 7
-        first_source = byte_first_bit ÷ width_bits
-        last_source = min(count - 1, byte_last_bit ÷ width_bits)
-        terms = Any[]
-
-        for source_index in first_source:last_source
-            source_first_bit = width_bits * source_index
-            source_last_bit = source_first_bit + width_bits - 1
-            first_bit = max(byte_first_bit, source_first_bit)
-            last_bit = min(byte_last_bit, source_last_bit)
-            first_bit <= last_bit || continue
-
-            source_shift = first_bit - source_first_bit
-            dest_shift = first_bit - byte_first_bit
-            width = last_bit - first_bit + 1
-            push!(terms, _pack_part_expr(:xs, source_index + 1, source_shift, width, dest_shift))
-        end
-
-        bytes[byte_index + 1] = _or_expr(terms)
-    end
-
-    return Expr(:tuple, bytes...)
+    return D <: Unsigned ? only(limbs) : Expr(:tuple, limbs...)
 end
 
-@generated function unpack(::Val{W}, ::Val{S}, data::U) where {W,S,U<:Unsigned}
-    width_bits = _check_pack_bitwidth(W)
-    count = _check_pack_count(S)
-    width_bits * count <= 8 * sizeof(U) ||
-        throw(ArgumentError("$U has $(8*sizeof(U)) bits, need $(width_bits * count) for $count × $width_bits-bit values"))
+"""
+    unpack(Val(W), Val(L), R, data)::NTuple{L,R}
 
-    mask = _low_mask(width_bits)
-    values = Vector{Any}(undef, count)
-    for i in 0:(count - 1)
-        shift = width_bits * i
-        expr = :data
-        shift > 0 && (expr = :($expr >> $shift))
-        values[i + 1] = :(UInt8($expr & $mask))
+The first `L` packed `W`-bit values of `data`, each in the low bits of an `R`.
+"""
+@generated function unpack(::Val{W}, ::Val{L}, ::Type{R}, data::Storage) where {W,L,R}
+    U = limb_type(data)
+    b = 8 * sizeof(U)
+    W * L <= b * limb_count(data) ||
+        return :(throw(ArgumentError($("$data has too few bits for $L $W-bit values"))))
+    limb(j) = data <: Unsigned ? :data : :(data[$(j + 1)])
+    values = map(0:(L - 1)) do i
+        first, last = W * i, W * i + W - 1
+        terms = Any[]
+        for j in (first ÷ b):(last ÷ b)
+            lo = b * j
+            f, l = max(lo, first), min(lo + b - 1, last)
+            push!(terms, _field_expr(limb(j), f - lo, l - f + 1, f - first, R))
+        end
+        _or_expr(R, terms)
     end
-
     return Expr(:tuple, values...)
 end
 
-@generated function unpack(::Val{W}, ::Val{S}, bytes::NTuple{N,UInt8}) where {W,S,N}
-    width_bits = _check_pack_bitwidth(W)
-    count = _check_pack_count(S)
-    expected = cld(width_bits * count, 8)
-    N == expected || throw(ArgumentError("expected $expected packed bytes for $count values of bitwidth $width_bits, got $N"))
+"""
+    packed_getindex(Val(W), R, data, i)::R
 
-    values = Vector{Any}(undef, count)
-    for value_index in 0:(count - 1)
-        value_first_bit = width_bits * value_index
-        value_last_bit = value_first_bit + width_bits - 1
-        first_byte = value_first_bit ÷ 8
-        last_byte = value_last_bit ÷ 8
-        terms = Any[]
-
-        for byte_index in first_byte:last_byte
-            byte_first_bit = 8 * byte_index
-            byte_last_bit = byte_first_bit + 7
-            first_bit = max(value_first_bit, byte_first_bit)
-            last_bit = min(value_last_bit, byte_last_bit)
-            first_bit <= last_bit || continue
-
-            source_shift = first_bit - byte_first_bit
-            dest_shift = first_bit - value_first_bit
-            width = last_bit - first_bit + 1
-            push!(terms, _pack_part_expr(:bytes, byte_index + 1, source_shift, width, dest_shift))
+Packed `W`-bit value `i` (1-based, unchecked) of `data`, in the low bits of an `R`.
+"""
+@inline function packed_getindex(::Val{W}, ::Type{R}, data::D, i::Int) where {W,R,D<:Storage}
+    b = 8 * sizeof(limb_type(D))
+    # unsigned, so that the division by the limb width is a shift and a mask
+    j, shift = divrem(UInt(W) * ((i - 1) % UInt), UInt(b))
+    @inbounds value = (get_limb(data, j) >> shift) % R
+    # A width dividing the limb never crosses into the next limb. Otherwise the
+    # value continues into the next limbs, which exist for an index in bounds.
+    if !(W <= b && b % W == 0)
+        for k in 1:cld(W - 1, b)
+            dest = UInt(k * b) - shift
+            dest < W || break
+            @inbounds value |= (get_limb(data, j + k) % R) << dest
         end
-
-        values[value_index + 1] = _or_expr(terms)
     end
-
-    return Expr(:tuple, values...)
+    return value & low_mask(R, W)
 end
 
-@inline function packed_getindex(::Val{W}, ::Val{S}, data::Unsigned, i::Integer) where {W,S}
-    @boundscheck 1 <= i <= S || throw(BoundsError(data, i))
-    shift = (Int(i) - 1) * W
-    mask = UInt8((UInt16(1) << W) - UInt16(1))
-    return UInt8((data >>> shift) & mask)
-end
-
-@inline function packed_getindex(::Val{W}, ::Val{S}, bytes::NTuple{N,UInt8}, i::Integer) where {W,S,N}
-    @boundscheck 1 <= i <= S || throw(BoundsError(bytes, i))
-
-    bit = (Int(i) - 1) * W
-    byte = (bit >>> 3) + 1
-    shift = bit & 0x07
-
-    word = UInt16(bytes[byte])
-    byte < N && (word |= UInt16(bytes[byte + 1]) << 8)
-
-    mask = UInt16((UInt16(1) << W) - 1)
-    return UInt8((word >>> shift) & mask)
+# Whether the bits of `data` past the first `bits` are all zero
+function padding_is_zero(data::D, bits::Int) where D<:Storage
+    b = 8 * sizeof(limb_type(D))
+    for j in 0:(limb_count(D) - 1)
+        used = clamp(bits - b * j, 0, b)
+        used < b && !iszero(get_limb(data, j) >> used) && return false
+    end
+    return true
 end

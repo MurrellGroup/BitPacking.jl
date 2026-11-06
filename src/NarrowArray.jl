@@ -125,15 +125,10 @@ function Base.getindex(arr::NarrowArray{T,N}, i::Vararg{Int,N}) where {T,N}
     return parent(arr)[outer_i...][inner_i...]
 end
 
-function narrow_chunk_storage_type(::Type{T}, L) where T
+function narrow_chunk_type(::Type{T}, L=pack_count(T)) where T
     chunk_length = check_chunk_length(T, L)
-    bits = bitwidth(T) * chunk_length
-    U = _unsigned_type_for(bits)
-    return U !== nothing && 8 * sizeof(U) == bits ? U : NTuple{bits ÷ 8, UInt8}
+    return NArray{T,1,Tuple{chunk_length},storage_type(bitwidth(T) * chunk_length)}
 end
-
-narrow_chunk_type(::Type{T}, L=pack_count(T)) where T =
-    NArray{T,1,Tuple{check_chunk_length(T, L)},narrow_chunk_storage_type(T, L)}
 
 function reinterpret_bytes(arr::NarrowArray)
     E = eltype(parent(arr))

@@ -3,6 +3,10 @@
 primitive type NativeFloat4 4 end
 primitive type NativeFloat6 6 end
 primitive type NativeUInt24 24 end
+primitive type NativeUInt2 2 end
+primitive type NativeUInt3 3 end
+primitive type NativeUInt10 10 end
+primitive type NativeUInt12 12 end
 
 native4(x::UInt8) = Core.Intrinsics.trunc_int(NativeFloat4, x)
 native6(x::UInt8) = Core.Intrinsics.trunc_int(NativeFloat6, x)
@@ -39,6 +43,24 @@ Base.convert(::Type{UInt8}, x::NativeFloat4) = BitPacking.raw_bits(x)
         v6 = NVector{NativeFloat6,4}(native6.((0x01, 0x02, 0x03, 0x04)))
         @test v6.data == (0x81, 0x30, 0x10)
         @test Tuple(v6) === native6.((0x01, 0x02, 0x03, 0x04))
+    end
+
+    @testset "NArray of native $T" for T in
+            (NativeUInt2, NativeUInt3, NativeFloat4, NativeFloat6, NativeUInt10, NativeUInt12, NativeUInt24)
+        W = BitPacking.bitwidth(T)
+        @test sizeof(T) == nextpow(2, cld(W, 8))
+        xs = ntuple(i -> BitPacking.from_raw_bits(T, UInt32(i) * 0x9e3779b9), 8)
+        v = NVector{T,8}(xs)
+        @test v.data isa BitPacking.storage_type(8W)
+        @test Tuple(v) === xs
+        @test all(v[i] === xs[i] for i in 1:8)
+        @test @inferred(reinterpret(UInt8, v)) isa NVector{UInt8,W}
+        @test reinterpret(T, reinterpret(UInt8, v)) === v
+        @test reinterpret(T, reinterpret(Bool, v)) === v
+
+        narrow = NarrowArray{T}(collect(xs))
+        @test copy(narrow) == collect(xs)
+        @test copy(reinterpret(Narrow(T), collect(reinterpret(UInt8, narrow)))) == collect(xs)
     end
 
     @testset "NarrowArray" begin
