@@ -39,14 +39,17 @@ end
 """
     storage_type(bits)
 
-The storage for `bits` packed bits: the unsigned integer of the bits rounded up
-to whole bytes when there is one, and a tuple of bytes otherwise.
+The storage for `bits` packed bits, rounded up to whole bytes: the unsigned
+integer of that many bytes when there is one, and otherwise a tuple of the
+widest of `UInt64`, `UInt32`, `UInt16` and `UInt8` that divides them, so that
+the storage is no larger than the bytes it holds.
 """
 function storage_type(bits::Integer)
     bits >= 0 || throw(ArgumentError("packed storage needs a non-negative bit count, got $bits"))
     nbytes = cld(bits, 8)
     nbytes in (1, 2, 4, 8, 16) && return unsigned_type(nbytes)
-    return NTuple{nbytes,UInt8}
+    limb = nbytes % 8 == 0 ? 8 : nbytes % 4 == 0 ? 4 : nbytes % 2 == 0 ? 2 : 1
+    return NTuple{nbytes ÷ limb,unsigned_type(limb)}
 end
 
 @generated storage_type(::Val{B}) where B = storage_type(B)

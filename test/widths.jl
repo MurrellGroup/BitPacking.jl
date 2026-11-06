@@ -27,6 +27,20 @@ reference_integer(xs) = sum(
 @testset "widths" begin
     rng = Random.MersenneTwister(0)
 
+    @testset "storage types" begin
+        @test BitPacking.storage_type(0) === Tuple{}
+        @test BitPacking.storage_type(1) === UInt8
+        @test BitPacking.storage_type(9) === UInt16
+        @test BitPacking.storage_type(24) === NTuple{3,UInt8}
+        @test BitPacking.storage_type(48) === NTuple{3,UInt16}
+        @test BitPacking.storage_type(96) === NTuple{3,UInt32}
+        @test BitPacking.storage_type(128) === UInt128
+        @test BitPacking.storage_type(129) === NTuple{17,UInt8}
+        @test BitPacking.storage_type(256) === NTuple{4,UInt64}
+        @test BitPacking.storage_type(384) === NTuple{6,UInt64}
+        @test NVector(ntuple(Float32, 8)).data isa NTuple{4,UInt64}
+    end
+
     @testset "$W-bit elements" for (W, T) in zip(WIDTHS, WIDTH_TYPES)
         for L in (1, 2, 3, 5, 8, 9, 17)
             xs = ntuple(_ -> random_value(rng, T), L)

@@ -15,9 +15,11 @@ value.
 `NArray` behaves like a `StaticArrays.StaticArray`, but stores its elements
 LSB-first in the `data` field: element 1 occupies the lowest
 [`bitwidth`](@ref)`(T)` bits, element 2 the next, and so on, in linear index
-order. The storage `D` is the unsigned integer of the total bits rounded up to
-whole bytes when there is one, and an `NTuple` of bytes otherwise; padding bits
-past the last element are always zero. Elements may be 1 to 128 bits wide.
+order. The storage `D` holds the total bits rounded up to whole bytes: the
+unsigned integer of that size when there is one, and otherwise an `NTuple` of
+the widest unsigned integers that divide it, such as `NTuple{3,UInt8}` for 24
+bits and `NTuple{4,UInt64}` for 256. Padding bits past the last element are
+always zero. Elements may be 1 to 128 bits wide.
 
 Use `NVector{T,L}` and `NMatrix{T,M,N}` for the common one- and two-dimensional
 forms. Constructors always take values:
