@@ -67,12 +67,8 @@ function NarrowArray{T,N,L}(arr::AbstractArray{S,N}) where {T,N,L,S}
     size(arr, 1) % chunk_length == 0 ||
         throw(ArgumentError("the first dimension of a NarrowArray{$T,$N,$L} input must be divisible by $chunk_length, got $(size(arr, 1))"))
 
-    chunks = if S === T
-        NVector{T,chunk_length}.(dense_chunks(Val(chunk_length), arr))
-    else
-        NVector{T,chunk_length}.(SVector{chunk_length,S}.(dense_chunks(Val(chunk_length), arr)))
-    end
-    return NarrowArray(chunks)
+    # the NVector constructor converts each value to `T`
+    return NarrowArray(NVector{T,chunk_length}.(dense_chunks(Val(chunk_length), arr)))
 end
 
 # `reinterpret` refuses arrays of a primitive type with unused bits (Julia
