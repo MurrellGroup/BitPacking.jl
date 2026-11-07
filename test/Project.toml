@@ -3,3 +3,8 @@ BitPacking = "b58c8408-13c4-4787-8733-7038ae624acf"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[compat]
+Pkg = "1.10"
+Random = "1.10"
+Test = "1.10"
