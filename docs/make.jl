@@ -14,6 +14,7 @@ makedocs(;
     ),
     pages=[
         "Home" => "index.md",
+        "Bit model" => "bit-model.md",
     ],
 )
 

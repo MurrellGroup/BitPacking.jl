@@ -1,6 +1,7 @@
 """
     NarrowArray{T}(array::AbstractArray)
     NarrowArray{T,N,L}(array::AbstractArray)
+    NarrowArray{T}(undef, dims...)
 
 Array wrapper whose parent stores packed [`NArray`](@ref) chunks.
 
@@ -23,6 +24,9 @@ julia> x = NarrowArray{Bool}([true, false, true, false, true, false, true, false
  1
  0
 ```
+
+`NarrowArray{T}(undef, dims...)` allocates an uninitialized one on the CPU, and
+`similar(array, Narrow(T), dims)` one on the backend of `array`.
 
 The input's first dimension must contain whole chunks. For example,
 `NarrowArray{Bool}` requires the first dimension to be divisible by 8, and a
@@ -67,36 +71,84 @@ function NarrowArray{T,N,L}(arr::AbstractArray{S,N}) where {T,N,L,S}
     size(arr, 1) % chunk_length == 0 ||
         throw(ArgumentError("the first dimension of a NarrowArray{$T,$N,$L} input must be divisible by $chunk_length, got $(size(arr, 1))"))
 
-    chunks = if S === T
-        NVector{T,chunk_length}.(dense_chunks(Val(chunk_length), arr))
-    else
-        NVector{T,chunk_length}.(SVector{chunk_length,S}.(dense_chunks(Val(chunk_length), arr)))
-    end
+    # the NVector constructor converts each value to `T`
+    chunks = GC.@preserve arr NVector{T,chunk_length}.(dense_chunks(Val(chunk_length), arr))
     return NarrowArray(chunks)
 end
 
-# `reinterpret` refuses arrays of a primitive type with unused bits (Julia
-# 1.14+), so for those the conversions between dense values and chunks go
-# through raw bits instead, at the cost of a temporary. They map closures over
-# `T` because `from_raw_bits.(T, x)` does not infer when `T` is a static
-# parameter, and GPU broadcasts need it to.
+# Dense values and chunks convert through a view of the dense array's first
+# dimension as runs of `L` values, each an `NTuple`. For an `Array` the view is
+# an `Array` over the same memory, which indexes many times faster than Base's
+# `ReinterpretArray`, so the caller must `GC.@preserve` the dense array while
+# using it. Other arrays, such as GPU arrays, use `reinterpret`. That refuses a
+# primitive type with unused bits (Julia 1.14+) or with an array stride above
+# its `sizeof` (a 24-bit primitive type before 1.14), so for those the
+# conversions go through raw bits, at the cost of a temporary. They map
+# closures over `T` because `from_raw_bits.(T, x)` does not infer when `T` is a
+# static parameter, and GPU broadcasts need it to.
+
+# Whether `NTuple{L,T}` lays out its values at the array stride of `T`
+@generated function runs_match_array(::Type{T}, ::Val{L}) where {T,L}
+    R = NTuple{L,T}
+    stride = Base.aligned_sizeof(T)
+    return isbitstype(T) && Base.aligned_sizeof(R) == L * stride &&
+        all(k -> fieldoffset(R, k) == (k - 1) * stride, 1:L)
+end
+
+# The `Array` of runs over the memory of `dense`, which must be preserved
+function array_runs(::Val{L}, dense::Array{T}) where {L,T}
+    dims = (size(dense, 1) ÷ L, Base.tail(size(dense))...)
+    return unsafe_wrap(Array, Ptr{NTuple{L,T}}(pointer(dense)), dims)
+end
 
 # The first dimension of `dense` as runs of `L` values, each an `NTuple`.
 function dense_chunks(::Val{L}, dense::AbstractArray{T}) where {L,T}
-    has_unused_bits(T) || return reinterpret(NTuple{L,T}, dense)
-    raw = reinterpret(NTuple{L,unsigned_type(sizeof(T))}, raw_bits.(dense))
+    dense isa Array && runs_match_array(T, Val(L)) && return array_runs(Val(L), dense)
+    array_reinterpret_fails(T) || return reinterpret(NTuple{L,T}, dense)
+    raw = reinterpret(NTuple{L,raw_type(T)}, raw_bits.(dense))
     return Broadcast.broadcasted(chunk -> map(bits -> from_raw_bits(T, bits), chunk), raw)
 end
 
-# The inverse of `dense_chunks`: runs of values, flattened into the first
-# dimension.
-function dense_values(::Type{T}, chunks::AbstractArray) where T
-    has_unused_bits(T) || return reinterpret(T, chunks)
-    raw = reinterpret(unsigned_type(sizeof(T)), raw_chunk.(chunks))
-    return map(bits -> from_raw_bits(T, bits), raw)
+# The inverse of `dense_chunks`: the values of `arr` as `T`, in a new dense
+# array on the backend of its parent. The unpacked chunks are written straight
+# into the result, viewed as runs of `L` values, so there is no temporary.
+function dense_values(::Type{T}, arr::NarrowArray{<:Any,N,L}) where {T,N,L}
+    chunks = parent(arr)
+    dense = similar(chunks, T, size(arr))
+    if dense isa Array && runs_match_array(T, Val(L))
+        GC.@preserve dense array_runs(Val(L), dense) .= Tuple.(SVector{L,T}.(chunks))
+    elseif array_reinterpret_fails(T)
+        raw = similar(chunks, raw_type(T), size(arr))
+        reinterpret(NTuple{L,raw_type(T)}, raw) .= (chunk -> raw_chunk(T, chunk)).(chunks)
+        dense .= (bits -> from_raw_bits(T, bits)).(raw)
+    else
+        reinterpret(NTuple{L,T}, dense) .= Tuple.(SVector{L,T}.(chunks))
+    end
+    return dense
 end
 
-raw_chunk(xs) = raw_bits.(Tuple(xs))
+raw_chunk(::Type{T}, xs) where T = map(x -> raw_bits(convert(T, x)), Tuple(xs))
+
+# Uninitialized arrays have no padding to clear: chunks are whole bytes of values.
+NarrowArray{T}(::UndefInitializer, dims::Dims{N}) where {T,N} =
+    NarrowArray{T,N,pack_count(T)}(undef, dims)
+NarrowArray{T,N}(::UndefInitializer, dims::Dims{N}) where {T,N} =
+    NarrowArray{T,N,pack_count(T)}(undef, dims)
+function NarrowArray{T,N,L}(::UndefInitializer, dims::Dims{N}) where {T,N,L}
+    N >= 1 ||
+        throw(ArgumentError("a NarrowArray{$T} needs at least one dimension to chunk along"))
+    chunk_length = check_chunk_length(T, L)
+    first(dims) % chunk_length == 0 ||
+        throw(ArgumentError("the first dimension of a NarrowArray{$T,$N,$L} must be divisible by $chunk_length, got $(first(dims))"))
+    chunk_dims = (first(dims) ÷ chunk_length, Base.tail(dims)...)
+    return NarrowArray(Array{narrow_chunk_type(T, chunk_length),N}(undef, chunk_dims))
+end
+NarrowArray{T}(::UndefInitializer, dims::Integer...) where T =
+    NarrowArray{T}(undef, map(Int, dims))
+NarrowArray{T,N}(::UndefInitializer, dims::Vararg{Integer,N}) where {T,N} =
+    NarrowArray{T,N}(undef, map(Int, dims))
+NarrowArray{T,N,L}(::UndefInitializer, dims::Vararg{Integer,N}) where {T,N,L} =
+    NarrowArray{T,N,L}(undef, map(Int, dims))
 
 NarrowArray{T}(arr::NarrowArray{T}) where T = arr
 NarrowArray{T,N}(arr::NarrowArray{T,N}) where {T,N} = arr
@@ -118,80 +170,87 @@ Base.size(arr::NarrowArray, i::Integer) = size(parent(arr), i) * size(eltype(par
 Base.size(arr::NarrowArray) = size(parent(arr)) .* inner_size(arr)
 
 Base.IndexStyle(::Type{<:NarrowArray}) = IndexCartesian()
-function Base.getindex(arr::NarrowArray{T,N}, i::Vararg{Int,N}) where {T,N}
-    outer_inner_i = ntuple(j -> fldmod1(i[j], inner_size(arr, j)), Val(N))
-    outer_i = first.(outer_inner_i)
-    inner_i = last.(outer_inner_i)
-    return parent(arr)[outer_i...][inner_i...]
+# The index of the chunk holding element `i`, and the element's index within it.
+# Chunks run along dimension 1, so only that dimension has an inner index.
+# The index is in bounds, so unsigned division is exact, and by a power-of-two
+# chunk length it is a shift and a mask.
+@inline function chunk_index(::NarrowArray{<:Any,N,L}, i::NTuple{N,Int}) where {N,L}
+    outer, inner = divrem((first(i) - 1) % UInt, UInt(L))
+    return ((outer % Int) + 1, Base.tail(i)...), (inner % Int) + 1
 end
 
-function narrow_chunk_storage_type(::Type{T}, L) where T
+Base.@propagate_inbounds function Base.getindex(arr::NarrowArray{T,N}, i::Vararg{Int,N}) where {T,N}
+    @boundscheck checkbounds(arr, i...)
+    outer, inner = chunk_index(arr, i)
+    return @inbounds parent(arr)[outer...][inner]
+end
+
+# Writes one element by repacking its chunk. On a GPU parent this is scalar
+# indexing, as for any GPU array.
+Base.@propagate_inbounds function Base.setindex!(arr::NarrowArray{T,N}, x, i::Vararg{Int,N}) where {T,N}
+    @boundscheck checkbounds(arr, i...)
+    outer, inner = chunk_index(arr, i)
+    chunks = parent(arr)
+    @inbounds chunks[outer...] = Base.setindex(chunks[outer...], convert(T, x), inner)
+    return arr
+end
+
+function narrow_chunk_type(::Type{T}, L=pack_count(T)) where T
     chunk_length = check_chunk_length(T, L)
-    bits = bitwidth(T) * chunk_length
-    U = _unsigned_type_for(bits)
-    return U !== nothing && 8 * sizeof(U) == bits ? U : NTuple{bits ÷ 8, UInt8}
+    return NArray{T,1,Tuple{chunk_length},storage_type(bitwidth(T) * chunk_length)}
 end
 
-narrow_chunk_type(::Type{T}, L=pack_count(T)) where T =
-    NArray{T,1,Tuple{check_chunk_length(T, L)},narrow_chunk_storage_type(T, L)}
-
-function reinterpret_bytes(arr::NarrowArray)
-    E = eltype(parent(arr))
-    bitwidth(E) == 8 * sizeof(E) ||
-        throw(ArgumentError("cannot reinterpret a NarrowArray with padded chunk storage"))
-    return reinterpret(UInt8, parent(arr))
-end
-
-function Base.reinterpret(::Type{T}, arr::NarrowArray{S}) where {T,S}
+# The same bits along dimension 1 as `T`: a plain array when `T` fills its
+# bytes, and a `NarrowArray{T}` otherwise. Chunks are whole bytes, so the bits
+# along dimension 1 are a multiple of 8, and when they are also a multiple of
+# `bitwidth(T)` they are whole `T` chunks.
+function Base.reinterpret(::Type{T′}, arr::NarrowArray{S}) where {T′,S}
+    T = concrete_element(T′)
     source_bits = bitwidth(S)
-    target_bits = bitwidth(T)
-    target_bits > 0 ||
-        throw(ArgumentError("cannot reinterpret to $T with non-positive bitwidth $target_bits"))
+    target_bits = check_bitwidth(T)
+    T === S && target_bits != 8 * sizeof(T) && return arr
     (size(arr, 1) * source_bits) % target_bits == 0 ||
         throw(ArgumentError("cannot reinterpret $(size(arr, 1)) $source_bits-bit value(s) as $target_bits-bit $T"))
 
-    bytes = reinterpret_bytes(arr)
+    bytes = reinterpret(UInt8, parent(arr))
     if target_bits == 8 * sizeof(T)
         return reinterpret(T, bytes)
-    elseif target_bits < 8 && sizeof(T) == 1
-        return NarrowArray(reinterpret(narrow_chunk_type(T), bytes))
     else
-        throw(ArgumentError("cannot reinterpret packed bytes as $T with bitwidth $target_bits and sizeof $(sizeof(T))"))
+        return NarrowArray(reinterpret(narrow_chunk_type(T), bytes))
     end
 end
 
 function Broadcast.broadcasted(::Type{T}, arr::NarrowArray) where T
     isbitstype(T) || return Broadcast.Broadcasted(T, (arr,))
 
-    L = length(eltype(parent(arr)))
-    chunks = SVector{L,T}.(parent(arr))
-    return dense_values(T, chunks)
+    return dense_values(T, arr)
 end
 
-Base.copy(arr::NarrowArray{T,<:Any,L}) where {T,L} = dense_values(T, SVector{L,T}.(parent(arr)))
+Base.copy(arr::NarrowArray{T}) where T = dense_values(T, arr)
 
 """
     Narrow(T)
 
 Representation tag for the packed form of logical element type `T`. A `Narrow`
-instance substitutes for a `Type` in array operations: passing `Narrow(T)`
-selects the packed [`NarrowArray{T}`](@ref) form where plain `T` selects the
-unpacked form.
+instance substitutes for a `Type` in array operations whose result is a
+[`NarrowArray{T}`](@ref):
 
-| operation     | with `T`                        | with `Narrow(T)`                  |
-|:--------------|:--------------------------------|:----------------------------------|
-| `reinterpret` | `reinterpret(T, ::NarrowArray)` | `reinterpret(Narrow(T), data)`    |
-| broadcast     | `T.(::NarrowArray)`             | `Narrow(T).(array)`               |
-| `similar`     | `similar(array, T, dims)`       | `similar(array, Narrow(T), dims)` |
+| operation     | to a `NarrowArray{T}`             | from a `NarrowArray`         |
+|:--------------|:----------------------------------|:-----------------------------|
+| `reinterpret` | `reinterpret(Narrow(T), data)`    | `reinterpret(T, narr)`       |
+| broadcast     | `Narrow(T).(array)`               | `T.(narr)`                   |
+| `similar`     | `similar(array, Narrow(T), dims)` | `similar(narr, T, dims)`     |
 
-For broadcast these are value conversions: `T.(narr)` unpacks to dense `T`
-values and `Narrow(T).(array)` packs values into a `NarrowArray{T}`. For
-`reinterpret` they are instead bit-preserving views of the same buffer in the two
-layouts: `reinterpret(T, narr)` views the packed bits as `T`, while
-`reinterpret(Narrow(T), data)` views an existing array of packed chunks as a
-`NarrowArray{T}` without copying. `similar(array, Narrow(T), dims)` allocates an
-uninitialized `NarrowArray{T}` of logical size `dims` whose chunk parent follows
-the backend of `array`.
+For broadcast these are value conversions: `Narrow(T).(array)` packs values into
+a `NarrowArray{T}` and `T.(narr)` unpacks to dense `T` values. `reinterpret`
+never converts and never unpacks: `reinterpret(Narrow(T), data)` views the bytes
+or packed chunks of `data` as a `NarrowArray{T}`, and `reinterpret(T, narr)`
+views the packed bits of `narr` as `T`, which is a plain array when `T` fills
+its bytes (`UInt8`, `Float32`) and a `NarrowArray{T}` otherwise (`Bool`, a 4-bit
+float). Both keep the bits and rescale dimension 1. `similar(array, Narrow(T),
+dims)` allocates an uninitialized `NarrowArray{T}` of logical size `dims` whose
+chunk parent follows the backend of `array`, and `similar(narr, T, dims)` a dense
+array on the backend of `narr`.
 
 `Narrow(T).(array)` makes the narrowing explicit where `NarrowArray{T}(array)`
 hides it; the equivalent in-place form is `dest .= expr` for a preallocated
@@ -202,25 +261,16 @@ struct Narrow{T} end
 
 Narrow(::Type{T}) where T = Narrow{T}()
 
-# Pack `dense` (logical values) into `chunks` by reinterpreting each run of `L`
-# values along the first dimension as one `NVector{T,L}`. The fused `.=` writes
-# straight into the existing `chunks`, so no packed temporary is allocated.
-function _pack_into!(chunks, ::Type{T}, ::Val{L}, dense::AbstractArray{S}) where {T,L,S}
-    if S === T
-        chunks .= NVector{T,L}.(dense_chunks(Val(L), dense))
-    else
-        chunks .= NVector{T,L}.(SVector{L,S}.(dense_chunks(Val(L), dense)))
-    end
-    return chunks
-end
-
-# `dest .= expr` materializes the (fused) broadcast once, then packs it directly
-# into `dest`'s existing parent at `dest`'s own chunk length `L`.
-function Base.copyto!(dest::NarrowArray{T,N,L}, bc::Broadcast.Broadcasted{Nothing}) where {T,N,L}
-    axes(dest) == axes(bc) ||
-        throw(DimensionMismatch("destination axes $(axes(dest)) do not match broadcast axes $(axes(bc))"))
-    dense = Broadcast.materialize(Broadcast.broadcasted(bc.f, bc.args...))
-    _pack_into!(parent(dest), T, Val(L), dense)
+# `dest .= expr` evaluates the (fused) broadcast into a dense temporary of `T`
+# on the backend of `dest`, with the usual broadcast rules for its shape, then
+# packs it straight into the existing parent at `dest`'s own chunk length `L`.
+# This takes over `materialize!` rather than `copyto!`, because a GPU source
+# gives the broadcast a GPU style whose `copyto!` would write `dest` element by
+# element.
+function Broadcast.materialize!(dest::NarrowArray{T,N,L}, bc::Broadcast.Broadcasted) where {T,N,L}
+    dense = similar(parent(dest), T, size(dest))
+    dense .= bc
+    GC.@preserve dense parent(dest) .= NVector{T,L}.(dense_chunks(Val(L), dense))
     return dest
 end
 
@@ -255,23 +305,6 @@ Broadcast.broadcasted(::Narrow{T}, x) where T = NarrowArray{T}(Broadcast.materia
 
 Base.reinterpret(::Narrow{T}, arr::AbstractArray) where T =
     NarrowArray(reinterpret(narrow_chunk_type(T), arr))
-
-# Deprecated: the `Narrow{T}` type form is replaced by the `Narrow(T)` instance
-# form. The second `broadcasted` method resolves the ambiguity with
-# `broadcasted(::Type{T}, arr::NarrowArray)` above.
-function Broadcast.broadcasted(::Type{Narrow{T}}, x) where T
-    Base.depwarn("`Narrow{$T}.(x)` is deprecated, use `Narrow($T).(x)` instead.", :broadcasted)
-    return Broadcast.broadcasted(Narrow(T), x)
-end
-function Broadcast.broadcasted(::Type{Narrow{T}}, x::NarrowArray) where T
-    Base.depwarn("`Narrow{$T}.(x)` is deprecated, use `Narrow($T).(x)` instead.", :broadcasted)
-    return Broadcast.broadcasted(Narrow(T), x)
-end
-
-function Base.reinterpret(::Type{Narrow{T}}, arr::AbstractArray) where T
-    Base.depwarn("`reinterpret(Narrow{$T}, arr)` is deprecated, use `reinterpret(Narrow($T), arr)` instead.", :reinterpret)
-    return reinterpret(Narrow(T), arr)
-end
 
 function Base.print_array(io::IO, arr::NarrowArray)
     host = Adapt.adapt(Array, arr)

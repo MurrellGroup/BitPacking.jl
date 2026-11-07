@@ -20,15 +20,17 @@ if TEST_CUTILE
     Pkg.activate(; temp=true)
     Pkg.develop(PackageSpec(path=joinpath(@__DIR__, "..")))
     # cuTile is pinned exactly: the codegen tests match emitted Tile IR, which
-    # is not something upstream keeps stable across releases. Widen to "0.3" to
+    # is not something upstream keeps stable across releases. Widen to "1" to
     # track the `[compat]` bound for the weak dependency instead.
     # CUDACore is a dependency of cuTile, so asking for it explicitly (to reach
     # `functional`, `CuArray` and `@cuda` in the device tests) costs nothing.
-    Pkg.add([PackageSpec(name="cuTile", version="0.3.2"), PackageSpec(name="Microfloats"),
+    Pkg.add([PackageSpec(name="cuTile", version="1.0.0"), PackageSpec(name="Microfloats"),
              PackageSpec(name="CUDACore")])
 end
 
 using BitPacking
+using BitPacking: SVector
+using Random
 using Test
 
 primitive type Float4_E2M1FN 8 end
@@ -50,6 +52,22 @@ bits(x::Float6_E3M2FN) = reinterpret(UInt8, x)
 bits(x) = x
 
 @testset "BitPacking.jl" begin
+    @testset "raw bits" begin
+        # bits above a narrow type's width read as zero, and are ignored on the way in
+        @test BitPacking.raw_bits(float4(0xfa)) === 0x0a
+        @test BitPacking.raw_bits(BitPacking.from_raw_bits(Float4_E2M1FN, 0xfa)) === 0x0a
+        @test bits(BitPacking.from_raw_bits(Float4_E2M1FN, 0xfa)) === 0x0a
+        @test BitPacking.raw_bits(true) === 0x01
+        @test BitPacking.from_raw_bits(Bool, 0x03) === true
+        @test BitPacking.from_raw_bits(Bool, 0x02) === false
+
+        # the input may be wider or narrower than the type
+        @test BitPacking.from_raw_bits(UInt8, 0x0102) === 0x02
+        @test BitPacking.from_raw_bits(UInt16, 0x01) === 0x0001
+        @test BitPacking.from_raw_bits(Int16, 0xffff) === Int16(-1)
+        @test BitPacking.raw_bits(Int8(-1)) === 0xff
+    end
+
     @testset "NArray" begin
         bools = (true, false, true, false, true, false, true, false)
         v = NVector(bools)
@@ -64,8 +82,9 @@ bits(x) = x
         @test v[8] === false
         @test BitPacking.bitwidth(v) == 8
         @test BitPacking.bitwidth(typeof(v)) == 8
-        @test reinterpret(UInt8, v) == 0x55
-        @test reinterpret(Unsigned, v) == 0x55
+        @test BitPacking.raw_bits(v) === 0x55
+        @test reinterpret(UInt8, v) === NVector{UInt8,1}(0x55)
+        @test BitPacking.from_raw_bits(NVector{Bool,8}, 0x55) === v
 
         b = Broadcast.broadcastable(v)
         @test b isa BitPacking.SVector{8,Bool}
@@ -79,16 +98,18 @@ bits(x) = x
         @test bits(f4[1]) == 0x0a
         @test bits(f4[2]) == 0x03
         @test BitPacking.bitwidth(f4) == 8
-        @test reinterpret(UInt8, f4) == 0x3a
+        @test BitPacking.raw_bits(f4) === 0x3a
 
         bools9 = (true, false, true, false, true, false, true, false, true)
         v9 = NVector(bools9)
         @test v9 isa NVector{Bool,9}
-        @test v9.data == (0x55, 0x01)
+        @test v9.data === 0x0155
         @test Tuple(v9) == bools9
         @test v9[1] === true
         @test v9[9] === true
-        @test reinterpret(UInt16, v9) == 0x0155
+        @test BitPacking.raw_bits(v9) === 0x0155
+        @test BitPacking.from_raw_bits(NVector{Bool,9}, 0x0155) === v9
+        @test_throws ArgumentError reinterpret(UInt16, v9)
 
         f6 = NVector((float6(0x01), float6(0x02), float6(0x03), float6(0x04)))
         @test f6 isa NVector{Float6_E3M2FN,4}
@@ -113,7 +134,8 @@ bits(x) = x
         @test n isa NVector{UInt8,2}
         @test n.data == 0x0201
         @test Tuple(n) == (0x01, 0x02)
-        @test reinterpret(UInt16, n) == 0x0201
+        @test BitPacking.raw_bits(n) === 0x0201
+        @test reinterpret(UInt16, n) === NVector{UInt16,1}(0x0201)
 
         same_uint = NVector{UInt8,2}(sv)
         @test same_uint isa NVector{UInt8,2}
@@ -156,113 +178,6 @@ bits(x) = x
         @test_throws ArgumentError NVector{Bool,9}(0x01)
     end
 
-    @testset "NarrowTuple" begin
-        T3 = @NarrowTuple{Float4_E2M1FN,UInt8,Float4_E2M1FN}
-        @test T3 === NarrowTuple{Tuple{Float4_E2M1FN,UInt8,Float4_E2M1FN},UInt16}
-        @test BitPacking.bitwidth(T3) == 16
-        @test BitPacking.bitwidth(Tuple{Float4_E2M1FN,UInt8,Float4_E2M1FN}) == 24
-
-        x3 = (float4(0x0a), 0xbc, float4(0x03))
-        nt3 = T3(x3)
-        @test nt3 isa T3
-        @test nt3.data == 0x3bca
-        @test bits.(Tuple(nt3)) == (0x0a, 0xbc, 0x03)
-        @test bits(nt3[1]) == 0x0a
-        @test nt3[2] == 0xbc
-        @test bits(nt3[Val(3)]) == 0x03
-
-        T4 = @NarrowTuple{Float4_E2M1FN,UInt8,Float4_E2M1FN,UInt8}
-        @test T4 === NarrowTuple{
-            Tuple{Float4_E2M1FN,UInt8,Float4_E2M1FN,UInt8},
-            NTuple{3,UInt8},
-        }
-
-        x4 = (float4(0x01), 0x23, float4(0x04), 0x56)
-        nt4 = NarrowTuple(x4)
-        @test nt4 isa T4
-        @test nt4.data == (0x31, 0x42, 0x56)
-        @test bits.(Tuple(nt4)) == (0x01, 0x23, 0x04, 0x56)
-        @test bits.(collect(nt4)) == [0x01, 0x23, 0x04, 0x56]
-
-        nt_bool = NarrowTuple((0x00, true))
-        @test nt_bool.data == (0x00, 0x01)
-        @test BitPacking.bitwidth(nt_bool) == 9
-        @test BitPacking.bitwidth(typeof(nt_bool)) == 9
-        @test sprint(show, nt_bool) == "@NarrowTuple(0x00, true)"
-        @test sprint(show, typeof(nt_bool)) == "@NarrowTuple{UInt8, Bool}"
-        @test sprint(show, T3) == "@NarrowTuple{Float4_E2M1FN, UInt8, Float4_E2M1FN}"
-        @test sprint(show, NarrowTuple) == "NarrowTuple"
-        @test sprint(show, NarrowTuple{Tuple{UInt8,Bool}}) == "NarrowTuple{Tuple{UInt8, Bool}}"
-        @test startswith(sprint(show, Union{typeof(nt_bool),T3}), "Union{")
-        @test contains(sprint(show, methods(show, Tuple{IO,Type{<:NarrowTuple}})), "T<:NarrowTuple")
-        @test length(typeof(nt_bool)) == 2
-        @test firstindex(nt_bool) == 1
-        @test lastindex(nt_bool) == 2
-        @test convert(Tuple{UInt8,Bool}, nt_bool) == (0x00, true)
-        @test NarrowTuple{Tuple{UInt8,Bool}}(0x00, true) == nt_bool
-        @test @NarrowTuple(0x00, true) == nt_bool
-        @test @NarrowTuple((0x00, true)) == nt_bool
-
-        nt_nested = @NarrowTuple(true, nt_bool)
-        @test BitPacking.bitwidth(nt_nested) == 10
-        @test nt_nested.data == (0x01, 0x02)
-        @test Tuple(nt_nested) == (true, nt_bool)
-        @test sprint(show, typeof(nt_nested)) == "@NarrowTuple{Bool, @NarrowTuple{UInt8, Bool}}"
-
-        @test BitPacking.bitwidth(BitPacking.ZeroPad{7}) == 7
-        @test BitPacking.bitwidth(BitPacking.OnePad{7}) == 7
-        @test BitPacking.bitwidth(BitPacking.ZeroPad(7)) == 7
-        @test BitPacking.bitwidth(BitPacking.OnePad(7)) == 7
-        @test sprint(show, BitPacking.ZeroPad(7)) == "BitPacking.ZeroPad(7)"
-        @test sprint(show, BitPacking.OnePad(7)) == "BitPacking.OnePad(7)"
-
-        Tzero = @NarrowTuple{UInt8,Bool,BitPacking.ZeroPad{7}}
-        @test Tzero === NarrowTuple{Tuple{UInt8,Bool,BitPacking.ZeroPad{7}},UInt16}
-        @test sprint(show, Tzero) == "@NarrowTuple{UInt8, Bool, BitPacking.ZeroPad{7}}"
-        nt_zero = Tzero(0x00, true)
-        @test nt_zero.data == 0x0100
-        @test BitPacking.bitwidth(nt_zero) == 16
-        @test Tuple(nt_zero) == (0x00, true, BitPacking.ZeroPad(7))
-        @test length(nt_zero) == 3
-        @test sprint(show, nt_zero) == "@NarrowTuple(0x00, true, BitPacking.ZeroPad(7))"
-        @test_throws ArgumentError Tzero(0xffff)
-
-        Tmidpad = @NarrowTuple{UInt8,BitPacking.ZeroPad{7},Bool}
-        nt_midpad = Tmidpad(0xff, true)
-        @test nt_midpad.data == 0x80ff
-        @test Tuple(nt_midpad) == (0xff, BitPacking.ZeroPad(7), true)
-        @test sprint(show, nt_midpad) == "@NarrowTuple(0xff, BitPacking.ZeroPad(7), true)"
-        @test sprint(show, @NarrowTuple(BitPacking.ZeroPad(8))) == "@NarrowTuple(BitPacking.ZeroPad(8))"
-        nt_midpad_value = Tmidpad(0xff, BitPacking.ZeroPad(7), true)
-        @test nt_midpad_value == nt_midpad
-        @test @NarrowTuple(0xff, BitPacking.ZeroPad(7), true) == nt_midpad
-
-        Tone = @NarrowTuple{UInt8,Bool,BitPacking.OnePad{7}}
-        nt_one = Tone(0x00, true)
-        @test nt_one.data == 0xff00
-        @test Tuple(nt_one) == (0x00, true, BitPacking.OnePad(7))
-        @test NarrowTuple((0x00, true, BitPacking.OnePad(7))) == nt_one
-        @test NarrowTuple{Tuple{UInt8,Bool,BitPacking.OnePad{7}}}(0x00, true, BitPacking.OnePad(7)) == nt_one
-        @test_throws ArgumentError Tone(0x0100)
-
-        Tbytes = @NarrowTuple{Float4_E2M1FN,BitPacking.ZeroPad{5},UInt8}
-        nt_bytes = Tbytes(float4(0x0a), 0xbc)
-        @test nt_bytes.data == (0x0a, 0x78, 0x01)
-        nt_bytes_tuple = Tuple(nt_bytes)
-        @test bits(nt_bytes_tuple[1]) == 0x0a
-        @test nt_bytes_tuple[2] == BitPacking.ZeroPad(5)
-        @test nt_bytes_tuple[3] == 0xbc
-        @test_throws ArgumentError Tbytes((0xfa, 0x78, 0x01))
-
-        Tonebytes = @NarrowTuple{Float4_E2M1FN,BitPacking.OnePad{5},UInt8}
-        nt_onebytes = Tonebytes(float4(0x0a), 0xbc)
-        @test nt_onebytes.data == (0xfa, 0x79, 0x01)
-        nt_onebytes_tuple = Tuple(nt_onebytes)
-        @test bits(nt_onebytes_tuple[1]) == 0x0a
-        @test nt_onebytes_tuple[2] == BitPacking.OnePad(5)
-        @test nt_onebytes_tuple[3] == 0xbc
-    end
-
     @testset "NarrowArray" begin
         values = Bool[1, 0, 1, 0, 1, 0, 1, 0]
         narrow = NarrowArray{Bool}(values)
@@ -280,7 +195,7 @@ bits(x) = x
 
         int_values = Int.(narrow)
         @test size(int_values) == size(narrow)
-        @test parent(int_values) isa Vector{BitPacking.SVector{8,Int}}
+        @test int_values isa Vector{Int}
         @test collect(int_values) == Int[1, 0, 1, 0, 1, 0, 1, 0]
 
         uint_values = UInt8[1, 0, 1, 0, 1, 0, 1, 0]
@@ -332,7 +247,7 @@ bits(x) = x
         @test collect(f4_bytes) == UInt8[0x21 0x43]
         f4_uints = UInt8.(f4_matrix)
         @test size(f4_uints) == size(f4_matrix)
-        @test parent(f4_uints) isa Matrix{BitPacking.SVector{2,UInt8}}
+        @test f4_uints isa Matrix{UInt8}
         @test collect(f4_uints) == UInt8[0x01 0x03; 0x02 0x04]
 
         f6_values = Float6_E3M2FN[float6(0x01), float6(0x02), float6(0x03), float6(0x04)]
@@ -349,6 +264,34 @@ bits(x) = x
         @test_throws ArgumentError NarrowArray{Float4_E2M1FN,1,4}(f4_values[1:2])
         @test bits.(copy(reinterpret(Float4_E2M1FN, narrow))) == UInt8[0x05, 0x05]
         @test_throws ArgumentError reinterpret(UInt16, narrow)
+        # a type that fills its bytes is always a plain view, even of itself
+        @test !(reinterpret(UInt8, NarrowArray{UInt8}(UInt8[1, 2])) isa NarrowArray)
+        @test reinterpret(Bool, narrow) === narrow
+    end
+
+    @testset "NarrowArray setindex!" begin
+        values = Bool[1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 0]
+        narrow = NarrowArray{Bool}(copy(values))
+        narrow[2] = true
+        values[2] = true
+        @test copy(narrow) == values
+        narrow[16] = 1
+        values[16] = true
+        @test copy(narrow) == values
+        @test_throws BoundsError narrow[17] = true
+        @test_throws BoundsError narrow[17]
+        @test sort(narrow) == sort(values)
+        @test reverse(narrow) == reverse(values)
+        dest = similar(narrow)
+        copyto!(dest, narrow)
+        @test copy(dest) == values
+        fill!(dest, false)
+        @test copy(dest) == falses(16)
+
+        f6 = NarrowArray{Float6_E3M2FN}(reshape(float6.(UInt8.(1:8)), 4, 2))
+        f6[3, 2] = float6(0x3f)
+        @test bits.(copy(f6)) == [0x01 0x05; 0x02 0x06; 0x03 0x3f; 0x04 0x08]
+        @test collect(reinterpret(UInt8, f6))[:, 1] == UInt8[0x81, 0x30, 0x10]
     end
 
     @testset "Narrow" begin
@@ -426,17 +369,29 @@ bits(x) = x
         # similar with a plain eltype is dense
         @test similar(packed, UInt8, (3,)) isa Vector{UInt8}
 
-        # deprecated Narrow{T} type forms still work
-        @test Narrow{Bool}.(values) == packed
-        @test Narrow{Bool}.(packed) == packed
-        @test copy(reinterpret(Narrow{Bool}, UInt8[0x55])) == values
-
         # print_array handles arrays beyond vectors and matrices
         arr3 = NarrowArray{Bool}(reshape(repeat(values, 4), 8, 2, 2))
         @test contains(sprint(show, MIME("text/plain"), arr3), "NarrowArray")
     end
 
+    include("widths.jl")
+
     isdefined(Core, :bitsizeof) && include("unused_bits.jl")
+
+    # A variable that a closure captures and that is reassigned is boxed, which
+    # costs speed on the CPU and does not compile in GPU code.
+    # Generated methods have no lowered source to read.
+    @testset "no boxed variables" begin
+        has_box(m) = try
+            occursin("Core.Box", string(Base.uncompressed_ast(m)))
+        catch
+            false
+        end
+        boxed = [m for n in names(BitPacking; all=true) if isdefined(BitPacking, n)
+                   for f in (getfield(BitPacking, n),) if f isa Function || f isa Type
+                   for m in methods(f) if m.module === BitPacking && has_box(m)]
+        @test isempty(boxed)
+    end
 
     TEST_CUTILE && include("cutile.jl")
 

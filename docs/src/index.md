@@ -6,8 +6,13 @@ CurrentModule = BitPacking
 
 Documentation for [BitPacking](https://github.com/MurrellGroup/BitPacking.jl).
 
+BitPacking packs values narrower than a byte, or of any width up to 128 bits,
+densely: [`NArray`](@ref) packs a static group of values into one storage value,
+and [`NarrowArray`](@ref) presents an array of such groups as an array of
+values. The [bit model](bit-model.md) page states the rules they share.
 
-## `bitwidth` interface for narrow types
+
+## Element protocol
 
 ```@docs
 BitPacking.bitwidth
@@ -21,14 +26,4 @@ BitPacking.from_raw_bits
 NArray
 NarrowArray
 Narrow
-```
-
-## Narrow tuples
-
-```@docs
-NarrowTuple
-@NarrowTuple
-BitPacking.Pad
-BitPacking.ZeroPad
-BitPacking.OnePad
 ```
