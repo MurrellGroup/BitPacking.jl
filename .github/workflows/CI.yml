@@ -38,9 +38,9 @@ jobs:
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@v1
-      # The cuTile extension tests (BITPACKING_TEST_CUTILE: true) are off until a
-      # Microfloats release supports BitPacking 0.3; until then they resolve a
-      # Microfloats that predates its BitPacking support.
+      # The cuTile extension tests (BITPACKING_TEST_CUTILE: true) are off until
+      # Microfloats 0.2.9, the first release on BitPacking 0.3, is registered;
+      # until then their environment can't resolve Microfloats.
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1
       - uses: codecov/codecov-action@v7

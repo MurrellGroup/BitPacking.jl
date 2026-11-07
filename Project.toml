@@ -12,6 +12,9 @@ Republic = "27243419-9dde-4721-b67c-fd63626fea7f"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [weakdeps]
+# No extension: listed so its [compat] bound keeps Microfloats releases that
+# predate BitPacking 0.3 out of any environment with this version.
+Microfloats = "31c70f10-a750-4521-b13c-797315ae2933"
 cuDNN = "02a925ec-e4fe-4b08-9a7e-0d78e3d38ccd"
 cuTile = "0dea8319-8c4a-4662-a73d-20234d115b9a"
 
@@ -21,6 +24,7 @@ cuTileExt = "cuTile"
 
 [compat]
 Adapt = "4.6.1"
+Microfloats = "0.2.9"
 Republic = "2.2.0"
 StaticArrays = "1.9.18"
 cuDNN = "6.3"
