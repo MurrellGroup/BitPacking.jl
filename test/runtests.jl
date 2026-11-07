@@ -7,25 +7,27 @@
 # below cuTile's own floor of 1.11 — resolves as it always did. The environment
 # has to exist before BitPacking is loaded: on 1.11 an extension is only
 # triggered for a package loaded from an environment that already knows about
-# the trigger.
+# the trigger. They are also skipped on prerelease Julia, which cuTile does not
+# yet compile on.
 const CUTILE_REQUESTED = get(ENV, "BITPACKING_TEST_CUTILE", "false") == "true"
-const TEST_CUTILE = CUTILE_REQUESTED && VERSION >= v"1.11"
+const TEST_CUTILE = CUTILE_REQUESTED && VERSION >= v"1.11" && isempty(VERSION.prerelease)
 
 if CUTILE_REQUESTED && !TEST_CUTILE
-    @info "skipping the cuTile extension tests: cuTile requires Julia 1.11 or later, running $VERSION"
+    @info "skipping the cuTile extension tests: cuTile requires a Julia release of 1.11 or later, running $VERSION"
 end
 
 if TEST_CUTILE
     using Pkg
     Pkg.activate(; temp=true)
     Pkg.develop(PackageSpec(path=joinpath(@__DIR__, "..")))
-    # cuTile is pinned exactly: the codegen tests match emitted Tile IR, which
-    # is not something upstream keeps stable across releases. Widen to "1" to
-    # track the `[compat]` bound for the weak dependency instead.
+    # cuTile comes from main, since its 1.0.0 release requires CUDA_Compiler_jll
+    # 0.5, which holds CUDACore at 6.3 and LLVM.jl at 9. Pin the next release
+    # exactly instead: the codegen tests match emitted Tile IR, which is not
+    # something upstream keeps stable across releases.
     # CUDACore is a dependency of cuTile, so asking for it explicitly (to reach
     # `functional`, `CuArray` and `@cuda` in the device tests) costs nothing.
-    Pkg.add([PackageSpec(name="cuTile", version="1.0.0"), PackageSpec(name="Microfloats"),
-             PackageSpec(name="CUDACore")])
+    Pkg.add([PackageSpec(url="https://github.com/JuliaGPU/cuTile.jl", rev="main"),
+             PackageSpec(name="Microfloats"), PackageSpec(name="CUDACore")])
 end
 
 using BitPacking
