@@ -7,25 +7,27 @@
 # below cuTile's own floor of 1.11 — resolves as it always did. The environment
 # has to exist before BitPacking is loaded: on 1.11 an extension is only
 # triggered for a package loaded from an environment that already knows about
-# the trigger.
+# the trigger. They are also skipped on prerelease Julia, which cuTile does not
+# yet compile on.
 const CUTILE_REQUESTED = get(ENV, "BITPACKING_TEST_CUTILE", "false") == "true"
-const TEST_CUTILE = CUTILE_REQUESTED && VERSION >= v"1.11"
+const TEST_CUTILE = CUTILE_REQUESTED && VERSION >= v"1.11" && isempty(VERSION.prerelease)
 
 if CUTILE_REQUESTED && !TEST_CUTILE
-    @info "skipping the cuTile extension tests: cuTile requires Julia 1.11 or later, running $VERSION"
+    @info "skipping the cuTile extension tests: cuTile requires a Julia release of 1.11 or later, running $VERSION"
 end
 
 if TEST_CUTILE
     using Pkg
     Pkg.activate(; temp=true)
     Pkg.develop(PackageSpec(path=joinpath(@__DIR__, "..")))
-    # cuTile is pinned exactly: the codegen tests match emitted Tile IR, which
-    # is not something upstream keeps stable across releases. Widen to "1" to
-    # track the `[compat]` bound for the weak dependency instead.
+    # cuTile comes from main, since its 1.0.0 release requires CUDA_Compiler_jll
+    # 0.5, which holds CUDACore at 6.3 and LLVM.jl at 9. Pin the next release
+    # exactly instead: the codegen tests match emitted Tile IR, which is not
+    # something upstream keeps stable across releases.
     # CUDACore is a dependency of cuTile, so asking for it explicitly (to reach
     # `functional`, `CuArray` and `@cuda` in the device tests) costs nothing.
-    Pkg.add([PackageSpec(name="cuTile", version="1.0.0"), PackageSpec(name="Microfloats"),
-             PackageSpec(name="CUDACore")])
+    Pkg.add([PackageSpec(url="https://github.com/JuliaGPU/cuTile.jl", rev="main"),
+             PackageSpec(name="Microfloats"), PackageSpec(name="CUDACore")])
 end
 
 using BitPacking
@@ -36,14 +38,10 @@ using Test
 primitive type Float4_E2M1FN 8 end
 primitive type Float6_E3M2FN 8 end
 
+# Stand-ins for narrow floats, with no arithmetic and no conversions: tests
+# build them from bit patterns with `float4` and `float6`.
 BitPacking.bitwidth(::Type{Float4_E2M1FN}) = 4
-Float4_E2M1FN(x::UInt8) = reinterpret(Float4_E2M1FN, x)
-Base.convert(::Type{Float4_E2M1FN}, x::UInt8) = Float4_E2M1FN(x)
-Base.convert(::Type{UInt8}, x::Float4_E2M1FN) = reinterpret(UInt8, x)
-
 BitPacking.bitwidth(::Type{Float6_E3M2FN}) = 6
-Float6_E3M2FN(x::UInt8) = reinterpret(Float6_E3M2FN, x)
-Base.convert(::Type{Float6_E3M2FN}, x::UInt8) = Float6_E3M2FN(x)
 
 float4(x::UInt8) = reinterpret(Float4_E2M1FN, x)
 float6(x::UInt8) = reinterpret(Float6_E3M2FN, x)
@@ -166,12 +164,16 @@ bits(x) = x
         @test uint_from_bool isa NVector{UInt8,8}
         @test Tuple(uint_from_bool) == (0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00)
 
-        f4_from_uint = NVector{Float4_E2M1FN,2}(BitPacking.SVector{2,UInt8}(0x0a, 0x03))
-        @test f4_from_uint isa NVector{Float4_E2M1FN,2}
-        @test f4_from_uint.data == 0x3a
-        @test bits.(Tuple(f4_from_uint)) == (0x0a, 0x03)
-        @test NVector{Float4_E2M1FN,2}((0x0a, 0x03)) == f4_from_uint
-        @test NVector{Float4_E2M1FN,2}(0x0a, 0x03) == f4_from_uint
+        f4_lanes = (float4(0x0a), float4(0x03))
+        f4_from_values = NVector{Float4_E2M1FN,2}(BitPacking.SVector(f4_lanes))
+        @test f4_from_values isa NVector{Float4_E2M1FN,2}
+        @test f4_from_values.data == 0x3a
+        @test bits.(Tuple(f4_from_values)) == (0x0a, 0x03)
+        @test NVector{Float4_E2M1FN,2}(f4_lanes) == f4_from_values
+        @test NVector{Float4_E2M1FN,2}(f4_lanes...) == f4_from_values
+        @test BitPacking.from_raw_bits(NVector{Float4_E2M1FN,2}, 0x3a) == f4_from_values
+        # an element type without a conversion from integers takes no integers
+        @test_throws MethodError NVector{Float4_E2M1FN,2}(0x0a, 0x03)
 
         @test BitPacking.StaticArrays.similar_type(typeof(v), Int, BitPacking.StaticArrays.Size(2)) === NVector{Int,2}
         @test_throws ArgumentError NVector{Bool,4}((true, false))
@@ -216,9 +218,12 @@ bits(x) = x
         f4_narrow = NarrowArray{Float4_E2M1FN}(f4_values)
         @test size(f4_narrow) == (4,)
         @test collect(reinterpret(UInt8, f4_narrow)) == UInt8[0x21, 0x43]
-        @test collect(UInt8.(f4_narrow)) == UInt8[0x01, 0x02, 0x03, 0x04]
-        @test NarrowArray{Float4_E2M1FN}(UInt8[0x01, 0x02, 0x03, 0x04]) == f4_narrow
-        @test copy(NarrowArray{UInt8}(f4_narrow)) == UInt8[0x01, 0x02, 0x03, 0x04]
+        @test BitPacking.raw_bits.(f4_narrow) == UInt8[0x01, 0x02, 0x03, 0x04]
+        @test NarrowArray{Float4_E2M1FN}(float4.(UInt8[0x01, 0x02, 0x03, 0x04])) == f4_narrow
+        # across element types, the constructor converts values
+        bool_narrow = NarrowArray{Bool}(Bool[1, 0, 1, 1, 0, 0, 1, 0])
+        @test NarrowArray{Bool}([1, 0, 1, 1, 0, 0, 1, 0]) == bool_narrow
+        @test copy(NarrowArray{UInt8}(bool_narrow)) == UInt8[1, 0, 1, 1, 0, 0, 1, 0]
 
         f4x4_narrow = NarrowArray{Float4_E2M1FN,1,4}(f4_values)
         @test f4x4_narrow isa NarrowVector{Float4_E2M1FN,4}
@@ -245,10 +250,13 @@ bits(x) = x
         f4_bytes = reinterpret(UInt8, f4_matrix)
         @test size(f4_bytes) == (1, 2)
         @test collect(f4_bytes) == UInt8[0x21 0x43]
-        f4_uints = UInt8.(f4_matrix)
-        @test size(f4_uints) == size(f4_matrix)
-        @test f4_uints isa Matrix{UInt8}
-        @test collect(f4_uints) == UInt8[0x01 0x03; 0x02 0x04]
+        f4_dense = Float4_E2M1FN.(f4_matrix)
+        @test f4_dense isa Matrix{Float4_E2M1FN}
+        @test bits.(f4_dense) == UInt8[0x01 0x03; 0x02 0x04]
+        bool_matrix = NarrowArray{Bool}(Bool[1 0; 0 1; 1 1; 0 0; 1 0; 0 1; 1 1; 0 0])
+        uint_matrix = UInt8.(bool_matrix)
+        @test uint_matrix isa Matrix{UInt8}
+        @test uint_matrix == UInt8[1 0; 0 1; 1 1; 0 0; 1 0; 0 1; 1 1; 0 0]
 
         f6_values = Float6_E3M2FN[float6(0x01), float6(0x02), float6(0x03), float6(0x04)]
         f6_narrow = NarrowArray{Float6_E3M2FN}(f6_values)
@@ -332,8 +340,8 @@ bits(x) = x
         @test collect(reinterpret(UInt8, f4_packed)) == UInt8[0x21, 0x43]
         @test bits.(copy(reinterpret(Narrow(Float4_E2M1FN), UInt8[0x21, 0x43]))) == bits.(f4_values)
 
-        # cross-type packing converts before packing, matching the constructor
-        @test Narrow(Float4_E2M1FN).(UInt8[0x01, 0x02, 0x03, 0x04]) == f4_packed
+        # cross-type packing converts values before packing, matching the constructor
+        @test Narrow(Bool).([1, 0, 1, 0, 1, 0, 1, 0]) == Narrow(Bool).(Bool[1, 0, 1, 0, 1, 0, 1, 0])
 
         # matrix destination chunks along the first dimension
         src = repeat(values, 1, 2)
@@ -342,9 +350,9 @@ bits(x) = x
         @test copy(mat) == src
 
         # cross-type destination broadcast converts before packing
-        f4_dest = similar(f4_packed)
-        f4_dest .= UInt8[0x01, 0x02, 0x03, 0x04]
-        @test collect(reinterpret(UInt8, f4_dest)) == UInt8[0x21, 0x43]
+        bool_dest = similar(NarrowArray{Bool}(falses(8)))
+        bool_dest .= [1, 0, 1, 0, 1, 0, 1, 0]
+        @test collect(reinterpret(UInt8, bool_dest)) == UInt8[0x55]
 
         # Narrow(T).(narr) dispatches on a NarrowArray source
         @test Narrow(Bool).(packed) == packed

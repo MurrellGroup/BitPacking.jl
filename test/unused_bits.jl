@@ -10,8 +10,6 @@ primitive type NativeUInt12 12 end
 
 native4(x::UInt8) = Core.Intrinsics.trunc_int(NativeFloat4, x)
 native6(x::UInt8) = Core.Intrinsics.trunc_int(NativeFloat6, x)
-Base.convert(::Type{NativeFloat4}, x::UInt8) = native4(x)
-Base.convert(::Type{UInt8}, x::NativeFloat4) = BitPacking.raw_bits(x)
 
 @testset "Primitive types with unused bits" begin
     @testset "bitwidth and raw bits" begin
@@ -78,10 +76,9 @@ Base.convert(::Type{UInt8}, x::NativeFloat4) = BitPacking.raw_bits(x)
         @test @inferred(copy(narrow)) == values
         @test @inferred(broadcast(NativeFloat4, narrow)) == values
 
-        # conversions on either side of the packing
-        @test NarrowArray{NativeFloat4}(UInt8[0x01, 0x02, 0x03, 0x04]) == narrow
-        @test copy(NarrowArray{UInt8}(values)) == UInt8[0x01, 0x02, 0x03, 0x04]
-        @test copy(NarrowArray{UInt8}(narrow)) == UInt8[0x01, 0x02, 0x03, 0x04]
+        # bits on either side of the packing
+        @test NarrowArray{NativeFloat4}(native4.(UInt8[0x01, 0x02, 0x03, 0x04])) == narrow
+        @test BitPacking.raw_bits.(narrow) == UInt8[0x01, 0x02, 0x03, 0x04]
 
         matrix = NarrowArray{NativeFloat4}(reshape(values, 2, 2))
         @test collect(reinterpret(UInt8, matrix)) == UInt8[0x21 0x43]
@@ -104,7 +101,5 @@ Base.convert(::Type{UInt8}, x::NativeFloat4) = BitPacking.raw_bits(x)
         dest = similar(narrow)
         dest .= reverse(values)
         @test copy(dest) == reverse(values)
-        dest .= UInt8[0x01, 0x02, 0x03, 0x04]
-        @test copy(dest) == values
     end
 end
