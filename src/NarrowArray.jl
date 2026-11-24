@@ -116,7 +116,16 @@ function dense_values(::Type{T}, arr::NarrowArray{<:Any,N,L}) where {T,N,L}
     chunks = parent(arr)
     dense = similar(chunks, T, size(arr))
     if dense isa Array && runs_match_array(T, Val(L))
-        GC.@preserve dense array_runs(Val(L), dense) .= Tuple.(SVector{L,T}.(chunks))
+        # A loop, not a broadcast: cuTile's compiler reaches this method through
+        # any `T.(x)` whose `x` it infers as `Any`, and on Julia 1.11 and 1.12 it
+        # never finishes inferring a broadcast into these runs
+        # (JuliaGPU/cuTile.jl#358). The loop is also faster for matrices.
+        GC.@preserve dense begin
+            runs = array_runs(Val(L), dense)
+            @inbounds for i in eachindex(runs, chunks)
+                runs[i] = Tuple(SVector{L,T}(chunks[i]))
+            end
+        end
     elseif array_reinterpret_fails(T)
         raw = similar(chunks, raw_type(T), size(arr))
         reinterpret(NTuple{L,raw_type(T)}, raw) .= (chunk -> raw_chunk(T, chunk)).(chunks)
