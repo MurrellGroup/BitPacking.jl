@@ -10,8 +10,9 @@ export Narrow
 
 @static if isdefined(Core, :bitsizeof)
     # Julia 1.14 lets a primitive type declare fewer bits than it stores, as in
-    # `primitive type Float4 4 end`, which occupies a byte.
-    bitsizeof(::Type{T}) where T = Core.bitsizeof(T)
+    # `primitive type Float4 4 end`, which occupies a byte. Other types keep all
+    # their bytes: `Core.bitsizeof` throws for them as of 1.14.0-beta1.
+    bitsizeof(::Type{T}) where T = isprimitivetype(T) ? Core.bitsizeof(T) : 8 * sizeof(T)
 else
     bitsizeof(::Type{T}) where T = 8 * sizeof(T)
 end
@@ -30,11 +31,12 @@ array_reinterpret_fails(::Type{T}) where T =
 
 Return the number of value bits used by `T` or by the type of `x`.
 
-The default for bitstypes is `Core.bitsizeof(T)` on Julia 1.14 and later, which
-is the declared width of a primitive type such as `primitive type Float4 4 end`,
-and `8 * sizeof(T)` before that. `Bool` is specialized to one bit. Packages and
-users can overload this for narrow types declared with whole bytes and for
-packed containers.
+The default for a primitive type is the width it declares: `Core.bitsizeof(T)`
+on Julia 1.14 and later, where `primitive type Float4 4 end` is allowed, and
+`8 * sizeof(T)` before that. Other bitstypes, such as structs, default to
+`8 * sizeof(T)`. `Bool` is specialized to one bit. Packages and users can
+overload this for narrow types declared with whole bytes and for packed
+containers.
 """
 bitwidth(::Type{T}) where T = isbitstype(T) ? bitsizeof(T) : error("$T is not a bitstype")
 bitwidth(::T) where T = bitwidth(T)
